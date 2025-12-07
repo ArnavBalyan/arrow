@@ -47,6 +47,7 @@
 #include "arrow/visit_array_inline.h"
 #include "parquet/chunker_internal.h"
 #include "parquet/column_page.h"
+#include "parquet/data_page_v3_metadata.h"
 #include "parquet/encoding.h"
 #include "parquet/encryption/encryption_internal.h"
 #include "parquet/encryption/internal_file_encryptor.h"
@@ -348,6 +349,58 @@ class SerializedPageWriter : public PageWriter {
     return uncompressed_size + header_size;
   }
 
+  int64_t WriteSymbolTablePage(const SymbolTablePage& page) override {
+    const int64_t uncompressed_size = page.buffer()->size();
+    if (uncompressed_size > std::numeric_limits<int32_t>::max()) {
+      throw ParquetException(
+          "Uncompressed symbol table page size overflows INT32_MAX. Size:",
+          uncompressed_size);
+    }
+
+    const uint8_t* output_data_buffer = page.buffer()->data();
+    int32_t output_data_len = static_cast<int32_t>(page.buffer()->size());
+
+    if (data_encryptor_.get()) {
+      PARQUET_THROW_NOT_OK(encryption_buffer_->Resize(
+          data_encryptor_->CiphertextLength(output_data_len), false));
+      UpdateEncryption(encryption::kDictionaryPage);
+      output_data_len =
+          data_encryptor_->Encrypt(page.buffer()->span_as<uint8_t>(),
+                                   encryption_buffer_->mutable_span_as<uint8_t>());
+      output_data_buffer = encryption_buffer_->data();
+    }
+
+    format::SymbolTablePageHeader symbol_header;
+    symbol_header.__set_symbol_table_type(ToThrift(page.symbol_table_type()));
+
+    format::PageHeader page_header;
+    page_header.__set_type(format::PageType::SYMBOL_TABLE);
+    page_header.__set_uncompressed_page_size(static_cast<int32_t>(uncompressed_size));
+    page_header.__set_compressed_page_size(static_cast<int32_t>(output_data_len));
+    page_header.__set_symbol_table_page_header(symbol_header);
+
+    if (page_checksum_verification_) {
+      uint32_t crc32 =
+          ::arrow::internal::crc32(/* prev */ 0, output_data_buffer, output_data_len);
+      page_header.__set_crc(static_cast<int32_t>(crc32));
+    }
+
+    PARQUET_ASSIGN_OR_THROW(int64_t start_pos, sink_->Tell());
+    symbol_table_page_offsets_.push_back(start_pos);
+
+    if (meta_encryptor_) {
+      UpdateEncryption(encryption::kDictionaryPageHeader);
+    }
+
+    const int64_t header_size =
+        thrift_serializer_->Serialize(&page_header, sink_.get(), meta_encryptor_.get());
+    PARQUET_THROW_NOT_OK(sink_->Write(output_data_buffer, output_data_len));
+
+    total_uncompressed_size_ += uncompressed_size + header_size;
+    total_compressed_size_ += output_data_len + header_size;
+    return uncompressed_size + header_size;
+  }
+
   void Close(bool has_dictionary, bool fallback) override {
     if (meta_encryptor_ != nullptr) {
       UpdateEncryption(encryption::kColumnMetaData);
@@ -357,6 +410,9 @@ class SerializedPageWriter : public PageWriter {
     FinishPageIndexes(/*final_position=*/0);
 
     // index_page_offset = -1 since they are not supported
+    for (int64_t offset : symbol_table_page_offsets_) {
+      metadata_->AddSymbolTableOffset(offset);
+    }
     metadata_->Finish(num_values_, dictionary_page_offset_, -1, data_page_offset_,
                       total_compressed_size_, total_uncompressed_size_, has_dictionary,
                       fallback, dict_encoding_stats_, data_encoding_stats_,
@@ -426,6 +482,9 @@ class SerializedPageWriter : public PageWriter {
     } else if (page.type() == PageType::DATA_PAGE_V2) {
       const DataPageV2& v2_page = checked_cast<const DataPageV2&>(page);
       SetDataPageV2Header(page_header, v2_page);
+    } else if (page.type() == PageType::DATA_PAGE_V3) {
+      const DataPageV3& v3_page = checked_cast<const DataPageV3&>(page);
+      SetDataPageV3Header(page_header, v3_page);
     } else {
       throw ParquetException("Unexpected page type");
     }
@@ -512,6 +571,39 @@ class SerializedPageWriter : public PageWriter {
     page_header.__set_data_page_header_v2(data_page_header);
   }
 
+  void SetDataPageV3Header(format::PageHeader& page_header, const DataPageV3& page) {
+    format::DataPageHeaderV3 data_page_header;
+    data_page_header.__set_num_values(page.num_values());
+    data_page_header.__set_num_nulls(page.num_nulls());
+    data_page_header.__set_num_rows(page.num_rows());
+    data_page_header.__set_values_encoding(ToThrift(page.encoding()));
+
+    if (!page.repetition_level_encodings().empty()) {
+      std::vector<format::Encoding::type> encs;
+      encs.reserve(page.repetition_level_encodings().size());
+      for (auto enc : page.repetition_level_encodings()) {
+        encs.push_back(ToThrift(enc));
+      }
+      data_page_header.__set_repetition_level_encodings(std::move(encs));
+    }
+    if (!page.definition_level_encodings().empty()) {
+      std::vector<format::Encoding::type> encs;
+      encs.reserve(page.definition_level_encodings().size());
+      for (auto enc : page.definition_level_encodings()) {
+        encs.push_back(ToThrift(enc));
+      }
+      data_page_header.__set_definition_level_encodings(std::move(encs));
+    }
+    data_page_header.__set_encoding_metadata(page.encoding_metadata());
+
+    if (column_index_builder_ == nullptr) {
+      data_page_header.__set_statistics(ToThrift(page.statistics()));
+    }
+
+    page_header.__set_type(format::PageType::DATA_PAGE_V3);
+    page_header.__set_data_page_header_v3(data_page_header);
+  }
+
   /// \brief Finish page index builders and update the stream offset to adjust
   /// page offsets.
   void FinishPageIndexes(int64_t final_position) {
@@ -540,6 +632,10 @@ class SerializedPageWriter : public PageWriter {
   }
 
   bool page_checksum_verification() { return page_checksum_verification_; }
+
+  const std::vector<int64_t>& symbol_table_page_offsets() const {
+    return symbol_table_page_offsets_;
+  }
 
  private:
   // To allow UpdateEncryption on Close
@@ -628,6 +724,7 @@ class SerializedPageWriter : public PageWriter {
 
   std::map<Encoding::type, int32_t> dict_encoding_stats_;
   std::map<Encoding::type, int32_t> data_encoding_stats_;
+  std::vector<int64_t> symbol_table_page_offsets_;
 
   ColumnIndexBuilder* column_index_builder_;
   OffsetIndexBuilder* offset_index_builder_;
@@ -668,6 +765,9 @@ class BufferedPageWriter : public PageWriter {
     // dictionary page offset should be 0 iff there are no dictionary pages
     auto dictionary_page_offset =
         has_dictionary_pages_ ? pager_->dictionary_page_offset() + final_position : 0;
+    for (int64_t offset : pager_->symbol_table_page_offsets()) {
+      metadata_->AddSymbolTableOffset(offset + final_position);
+    }
     metadata_->Finish(pager_->num_values(), dictionary_page_offset, -1,
                       pager_->data_page_offset() + final_position,
                       pager_->total_compressed_size(), pager_->total_uncompressed_size(),
@@ -684,6 +784,10 @@ class BufferedPageWriter : public PageWriter {
 
   int64_t WriteDataPage(const DataPage& page) override {
     return pager_->WriteDataPage(page);
+  }
+
+  int64_t WriteSymbolTablePage(const SymbolTablePage& page) override {
+    return pager_->WriteSymbolTablePage(page);
   }
 
   void Compress(const Buffer& src_buffer, ResizableBuffer* dest_buffer) override {
@@ -785,6 +889,9 @@ class ColumnWriterImpl {
  protected:
   virtual std::shared_ptr<Buffer> GetValuesBuffer() = 0;
 
+  // Get the encoding pipeline descriptor for V3 pages
+  virtual const EncodingPipelineDescriptor* GetEncodingPipelineDescriptor() = 0;
+
   // Serializes Dictionary Page if enabled
   virtual void WriteDictionaryPage() = 0;
 
@@ -816,6 +923,9 @@ class ColumnWriterImpl {
   void BuildDataPageV2(int64_t definition_levels_rle_size,
                        int64_t repetition_levels_rle_size, int64_t uncompressed_size,
                        const std::shared_ptr<Buffer>& values);
+  void BuildDataPageV3(int64_t definition_levels_size, int64_t repetition_levels_size,
+                       int64_t uncompressed_size, const std::shared_ptr<Buffer>& values,
+                       const EncodingPipelineDescriptor* pipeline);
 
   // Serializes Data Pages
   void WriteDataPage(const DataPage& page) {
@@ -964,29 +1074,45 @@ void ColumnWriterImpl::AddDataPage() {
   int64_t repetition_levels_rle_size = 0;
 
   std::shared_ptr<Buffer> values = GetValuesBuffer();
-  bool is_v1_data_page = properties_->data_page_version() == ParquetDataPageVersion::V1;
+  ParquetDataPageVersion data_page_version = properties_->data_page_version();
+  bool include_length_prefix = data_page_version == ParquetDataPageVersion::V1;
 
   if (descr_->max_definition_level() > 0) {
     definition_levels_rle_size = RleEncodeLevels(
-        definition_levels_sink_.data(), definition_levels_rle_.get(),
-        descr_->max_definition_level(), /*include_length_prefix=*/is_v1_data_page);
+    definition_levels_sink_.data(), definition_levels_rle_.get(),
+        descr_->max_definition_level(), /*include_length_prefix=*/include_length_prefix);
   }
 
   if (descr_->max_repetition_level() > 0) {
     repetition_levels_rle_size = RleEncodeLevels(
-        repetition_levels_sink_.data(), repetition_levels_rle_.get(),
-        descr_->max_repetition_level(), /*include_length_prefix=*/is_v1_data_page);
+    repetition_levels_sink_.data(), repetition_levels_rle_.get(),
+        descr_->max_repetition_level(), /*include_length_prefix=*/include_length_prefix);
   }
 
   int64_t uncompressed_size =
       definition_levels_rle_size + repetition_levels_rle_size + values->size();
 
-  if (is_v1_data_page) {
-    BuildDataPageV1(definition_levels_rle_size, repetition_levels_rle_size,
-                    uncompressed_size, values);
-  } else {
-    BuildDataPageV2(definition_levels_rle_size, repetition_levels_rle_size,
-                    uncompressed_size, values);
+  switch (data_page_version) {
+    case ParquetDataPageVersion::V1:
+      BuildDataPageV1(definition_levels_rle_size, repetition_levels_rle_size,
+                      uncompressed_size, values);
+      break;
+    case ParquetDataPageVersion::V2:
+      BuildDataPageV2(definition_levels_rle_size, repetition_levels_rle_size,
+                      uncompressed_size, values);
+      break;
+    case ParquetDataPageVersion::V3: {
+      const EncodingPipelineDescriptor* pipeline = GetEncodingPipelineDescriptor();
+      if (pipeline == nullptr) {
+        throw ParquetException(
+            "Data page V3 requires encoders that expose an encoding pipeline");
+      }
+      BuildDataPageV3(definition_levels_rle_size, repetition_levels_rle_size,
+                      uncompressed_size, values, pipeline);
+      break;
+    }
+    default:
+      throw ParquetException("Unknown data page version requested");
   }
 
   // Re-initialize the sinks for next Page.
@@ -1101,6 +1227,76 @@ void ColumnWriterImpl::BuildDataPageV2(int64_t definition_levels_rle_size,
                     std::move(page_size_stats));
     WriteDataPage(page);
   }
+}
+
+void ColumnWriterImpl::BuildDataPageV3(int64_t definition_levels_size,
+                                       int64_t repetition_levels_size,
+                                       int64_t uncompressed_size,
+                                       const std::shared_ptr<Buffer>& values,
+                                       const EncodingPipelineDescriptor* pipeline) {
+  if (pipeline == nullptr) {
+    throw ParquetException("Data page V3 requires an encoding pipeline descriptor");
+  }
+
+  // Assemble the uncompressed page layout: repetition levels, definition levels, values.
+  PARQUET_THROW_NOT_OK(uncompressed_data_->Resize(uncompressed_size, false));
+  ConcatenateBuffers(definition_levels_size, repetition_levels_size, values,
+                     uncompressed_data_->mutable_data());
+
+  auto [page_stats, page_size_stats] = GetPageStatistics();
+  page_stats.ApplyStatSizeLimits(properties_->max_statistics_size(descr_->path()));
+  page_stats.set_is_signed(SortOrder::SIGNED == descr_->sort_order());
+  ResetPageStatistics();
+
+  std::shared_ptr<Buffer> compressed_data;
+  if (pager_->has_compressor()) {
+    pager_->Compress(*(uncompressed_data_.get()), compressor_temp_buffer_.get());
+    compressed_data = compressor_temp_buffer_;
+  } else {
+    compressed_data = uncompressed_data_;
+  }
+
+  int32_t num_values = static_cast<int32_t>(num_buffered_values_);
+  int32_t null_count = static_cast<int32_t>(num_buffered_nulls_);
+  int32_t num_rows = static_cast<int32_t>(num_buffered_rows_);
+  int64_t first_row_index = rows_written_ - num_buffered_rows_;
+
+  DataPageV3Metadata metadata;
+  metadata.repetition_levels_length = repetition_levels_size;
+  metadata.definition_levels_length = definition_levels_size;
+  metadata.values_length = values->size();
+  metadata.values_pipeline = *pipeline;
+  std::string metadata_bytes = SerializeDataPageV3Metadata(metadata);
+
+  std::vector<Encoding::type> rep_level_encodings;
+  if (descr_->max_repetition_level() > 0 && repetition_levels_size > 0) {
+    rep_level_encodings.push_back(Encoding::RLE);
+  }
+  std::vector<Encoding::type> def_level_encodings;
+  if (descr_->max_definition_level() > 0 && definition_levels_size > 0) {
+    def_level_encodings.push_back(Encoding::RLE);
+  }
+
+  std::unique_ptr<DataPage> page_ptr;
+  if (has_dictionary_ && !fallback_) {
+    PARQUET_ASSIGN_OR_THROW(auto data_copy,
+                            compressed_data->CopySlice(0, compressed_data->size(), allocator_));
+    page_ptr = std::make_unique<DataPageV3>(
+        data_copy, num_values, null_count, num_rows, encoding_, uncompressed_size,
+        std::move(page_stats), first_row_index, std::move(page_size_stats),
+        std::move(rep_level_encodings), std::move(def_level_encodings),
+        std::move(metadata), std::move(metadata_bytes));
+    total_compressed_bytes_ += page_ptr->size() + sizeof(format::PageHeader);
+    data_pages_.push_back(std::move(page_ptr));
+    return;
+  }
+
+  DataPageV3 page(compressed_data, num_values, null_count, num_rows, encoding_,
+                  uncompressed_size, std::move(page_stats), first_row_index,
+                  std::move(page_size_stats), std::move(rep_level_encodings),
+                  std::move(def_level_encodings), std::move(metadata),
+                  std::move(metadata_bytes));
+  WriteDataPage(page);
 }
 
 int64_t ColumnWriterImpl::Close() {
@@ -1283,8 +1479,16 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
                         Encoding::type encoding, const WriterProperties* properties)
       : ColumnWriterImpl(metadata, std::move(pager), use_dictionary, encoding,
                          properties) {
-    current_encoder_ = MakeEncoder(ParquetType::type_num, encoding, use_dictionary,
-                                   descr_, properties->memory_pool());
+    const CompositeEncodingSpec* composite_spec =
+        properties->composite_encoding(descr_->path());
+    current_encoder_ =
+        MakeEncoder(ParquetType::type_num, encoding, use_dictionary, descr_,
+                    properties->memory_pool(), composite_spec);
+    if (encoding == Encoding::COMPOSITE &&
+        properties->data_page_version() != ParquetDataPageVersion::V3) {
+      throw ParquetException(
+          "Composite encoding requires data page version ParquetDataPageVersion::V3");
+    }
     // We have to dynamic_cast as some compilers don't want to static_cast
     // through virtual inheritance.
     current_value_encoder_ =
@@ -1313,6 +1517,7 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
     }
     pages_change_on_record_boundaries_ =
         properties->data_page_version() == ParquetDataPageVersion::V2 ||
+        properties->data_page_version() == ParquetDataPageVersion::V3 ||
         properties->page_index_enabled(descr_->path());
   }
 
@@ -1485,6 +1690,10 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
     return current_encoder_->FlushValues();
   }
 
+  const EncodingPipelineDescriptor* GetEncodingPipelineDescriptor() override {
+    return current_encoder_->encoding_pipeline_descriptor();
+  }
+
   // Internal function to handle direct writing of ::arrow::DictionaryArray,
   // since the standard logic concerning dictionary size limits and fallback to
   // plain encoding is circumvented
@@ -1535,6 +1744,15 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
     DictionaryPage page(buffer, current_dict_encoder_->num_entries(),
                         properties_->dictionary_page_encoding());
     total_bytes_written_ += pager_->WriteDictionaryPage(page);
+  }
+
+  void WriteSymbolTable(const std::shared_ptr<Buffer>& buffer,
+                        SymbolTable::type table_type) {
+    if (!buffer || buffer->size() == 0) {
+      return;
+    }
+    SymbolTablePage page(buffer, table_type);
+    total_bytes_written_ += pager_->WriteSymbolTablePage(page);
   }
 
   StatisticsPair GetPageStatistics() override {
@@ -1827,8 +2045,8 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
       FlushBufferedDataPages();
       fallback_ = true;
       // Only PLAIN encoding is supported for fallback
-      current_encoder_ = MakeEncoder(ParquetType::type_num, Encoding::PLAIN, false,
-                                     descr_, properties_->memory_pool());
+      current_encoder_ = MakeEncoder(ParquetType::type_num, Encoding::PLAIN, false, descr_,
+                                     properties_->memory_pool(), /*composite_spec=*/nullptr);
       current_value_encoder_ = dynamic_cast<ValueEncoderType*>(current_encoder_.get());
       current_dict_encoder_ = nullptr;  // not using dict
       encoding_ = Encoding::PLAIN;
@@ -2650,11 +2868,11 @@ std::shared_ptr<ColumnWriter> ColumnWriter::Make(ColumnChunkMetaDataBuilder* met
                               descr->physical_type() != Type::BOOLEAN;
   Encoding::type encoding = properties->encoding(descr->path());
   if (encoding == Encoding::UNKNOWN) {
-    encoding = (descr->physical_type() == Type::BOOLEAN &&
-                properties->version() != ParquetVersion::PARQUET_1_0 &&
-                properties->data_page_version() == ParquetDataPageVersion::V2)
-                   ? Encoding::RLE
-                   : Encoding::PLAIN;
+    bool use_rle_boolean =
+        (descr->physical_type() == Type::BOOLEAN &&
+         properties->version() != ParquetVersion::PARQUET_1_0 &&
+         properties->data_page_version() != ParquetDataPageVersion::V1);
+    encoding = use_rle_boolean ? Encoding::RLE : Encoding::PLAIN;
   }
   if (use_dictionary) {
     encoding = properties->dictionary_index_encoding();

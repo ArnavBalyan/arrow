@@ -446,6 +446,9 @@ class PARQUET_EXPORT ColumnChunkMetaDataBuilder {
   // column geometry statistics
   void SetGeoStatistics(const geospatial::EncodedGeoStatistics& geo_stats);
 
+  // Record the file offsets of symbol table pages referenced by this chunk.
+  void AddSymbolTableOffset(int64_t offset);
+
   void SetKeyValueMetadata(std::shared_ptr<const KeyValueMetadata> key_value_metadata);
 
   // get the column descriptor

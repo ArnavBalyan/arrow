@@ -97,6 +97,7 @@ bool PageCanUseChecksum(PageType::type pageType) {
   switch (pageType) {
     case PageType::type::DATA_PAGE:
     case PageType::type::DATA_PAGE_V2:
+    case PageType::type::DATA_PAGE_V3:
     case PageType::type::DICTIONARY_PAGE:
       return true;
     default:
@@ -259,6 +260,8 @@ std::string EncodingToString(Encoding::type t) {
       return "RLE_DICTIONARY";
     case Encoding::BYTE_STREAM_SPLIT:
       return "BYTE_STREAM_SPLIT";
+    case Encoding::COMPOSITE:
+      return "COMPOSITE";
     default:
       return "UNKNOWN";
   }

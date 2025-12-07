@@ -46,6 +46,7 @@
 #include "arrow/util/rle_encoding_internal.h"
 #include "arrow/util/unreachable.h"
 #include "parquet/column_page.h"
+#include "parquet/data_page_v3_metadata.h"
 #include "parquet/encoding.h"
 #include "parquet/encryption/encryption_internal.h"
 #include "parquet/encryption/internal_file_decryptor.h"
@@ -260,6 +261,9 @@ class SerializedPageReader : public PageReader {
                                              int compressed_len, int uncompressed_len,
                                              int levels_byte_len = 0);
 
+  void HandleSymbolTablePage(std::shared_ptr<Buffer> page_buffer,
+                             const format::SymbolTablePageHeader& header);
+
   // Returns true for non-data pages, and if we should skip based on
   // data_page_filter_. Performs basic checks on values in the page header.
   // Fills in data_page_statistics.
@@ -308,6 +312,8 @@ class SerializedPageReader : public PageReader {
   // updated by only the page ordinal.
   std::string data_page_aad_;
   std::string data_page_header_aad_;
+
+  std::vector<std::shared_ptr<SymbolTablePage>> symbol_tables_;
 };
 
 void SerializedPageReader::InitDecryption() {
@@ -381,10 +387,31 @@ bool SerializedPageReader::ShouldSkipPage(EncodedStatistics* data_page_statistic
         return true;
       }
     }
+  } else if (page_type == PageType::DATA_PAGE_V3) {
+    const format::DataPageHeaderV3& header = current_page_header_.data_page_header_v3;
+    CheckNumValuesInHeader(header.num_values);
+    if (header.num_rows < 0 || header.num_nulls < 0) {
+      throw ParquetException("Invalid data page v3 header (negative counts)");
+    }
+    *data_page_statistics = ExtractStatsFromHeader(header);
+    seen_num_values_ += header.num_values;
+    if (data_page_filter_) {
+      const EncodedStatistics* filter_statistics =
+          data_page_statistics->is_set() ? data_page_statistics : nullptr;
+      DataPageStats data_page_stats(filter_statistics, header.num_values,
+                                    header.num_rows);
+      if (data_page_filter_(data_page_stats)) {
+        return true;
+      }
+    }
   } else if (page_type == PageType::DICTIONARY_PAGE) {
     const format::DictionaryPageHeader& dict_header =
         current_page_header_.dictionary_page_header;
     CheckNumValuesInHeader(dict_header.num_values);
+  } else if (page_type == PageType::DATA_PAGE_V3) {
+    throw ParquetException("Data page V3 is not supported by this reader");
+  } else if (page_type == PageType::SYMBOL_TABLE) {
+    // Symbol table pages are handled explicitly in NextPage()
   } else {
     // We don't know what this page type is. We're allowed to skip non-data
     // pages.
@@ -537,6 +564,63 @@ std::shared_ptr<Page> SerializedPageReader::NextPage() {
           LoadEnumSafe(&header.encoding), header.definition_levels_byte_length,
           header.repetition_levels_byte_length, uncompressed_len, is_compressed,
           std::move(data_page_statistics));
+    } else if (page_type == PageType::DATA_PAGE_V3) {
+      ++page_ordinal_;
+      const format::DataPageHeaderV3& header = current_page_header_.data_page_header_v3;
+
+      if (!header.__isset.encoding_metadata) {
+        throw ParquetException("Data page V3 missing encoding metadata");
+      }
+      DataPageV3Metadata metadata =
+          DeserializeDataPageV3Metadata(header.encoding_metadata);
+
+      page_buffer =
+          DecompressIfNeeded(std::move(page_buffer), compressed_len, uncompressed_len);
+
+      const int64_t total_lengths = metadata.repetition_levels_length +
+                                    metadata.definition_levels_length +
+                                    metadata.values_length;
+      if (total_lengths > page_buffer->size()) {
+        throw ParquetException("Data page V3 lengths exceed page size");
+      }
+
+      auto load_level_encodings =
+          [](const std::vector<format::Encoding::type>& thrift_encodings) {
+            std::vector<Encoding::type> encodings;
+            encodings.reserve(thrift_encodings.size());
+            for (const auto& enc : thrift_encodings) {
+              encodings.push_back(FromThriftUnsafe(enc));
+            }
+            return encodings;
+          };
+
+      std::vector<Encoding::type> repetition_encodings;
+      if (header.__isset.repetition_level_encodings) {
+        repetition_encodings =
+            load_level_encodings(header.repetition_level_encodings);
+      } else if (metadata.repetition_levels_length > 0) {
+        repetition_encodings.push_back(Encoding::RLE);
+      }
+
+      std::vector<Encoding::type> definition_encodings;
+      if (header.__isset.definition_level_encodings) {
+        definition_encodings =
+            load_level_encodings(header.definition_level_encodings);
+      } else if (metadata.definition_levels_length > 0) {
+        definition_encodings.push_back(Encoding::RLE);
+      }
+
+      return std::make_shared<DataPageV3>(
+          page_buffer, header.num_values, header.num_nulls, header.num_rows,
+          LoadEnumSafe(&header.values_encoding), uncompressed_len,
+          std::move(data_page_statistics), std::nullopt, SizeStatistics(),
+          std::move(repetition_encodings), std::move(definition_encodings),
+          std::move(metadata), header.encoding_metadata);
+    } else if (page_type == PageType::SYMBOL_TABLE) {
+      const format::SymbolTablePageHeader& header =
+          current_page_header_.symbol_table_page_header;
+      HandleSymbolTablePage(std::move(page_buffer), header);
+      continue;
     } else {
       throw ParquetException(
           "Internal error, we have already skipped non-data pages in ShouldSkipPage()");
@@ -587,6 +671,17 @@ std::shared_ptr<Buffer> SerializedPageReader::DecompressIfNeeded(
   }
 
   return decompression_buffer_;
+}
+
+void SerializedPageReader::HandleSymbolTablePage(
+    std::shared_ptr<Buffer> page_buffer,
+    const format::SymbolTablePageHeader& header) {
+  SymbolTable::type table_type = SymbolTable::UNDEFINED;
+  if (header.__isset.symbol_table_type) {
+    table_type = LoadEnumSafe(&header.symbol_table_type);
+  }
+  symbol_tables_.push_back(
+    std::make_shared<SymbolTablePage>(std::move(page_buffer), table_type));
 }
 
 }  // namespace
@@ -703,12 +798,17 @@ class ColumnReaderImplBase {
         const auto* page = static_cast<const DataPageV1*>(current_page_.get());
         const int64_t levels_byte_size = InitializeLevelDecoders(
             *page, page->repetition_level_encoding(), page->definition_level_encoding());
-        InitializeDataDecoder(*page, levels_byte_size);
+        InitializeDataDecoder(*page, levels_byte_size, /*pipeline=*/nullptr);
         return true;
       } else if (current_page_->type() == PageType::DATA_PAGE_V2) {
         const auto* page = static_cast<const DataPageV2*>(current_page_.get());
         int64_t levels_byte_size = InitializeLevelDecodersV2(*page);
-        InitializeDataDecoder(*page, levels_byte_size);
+        InitializeDataDecoder(*page, levels_byte_size, /*pipeline=*/nullptr);
+        return true;
+      } else if (current_page_->type() == PageType::DATA_PAGE_V3) {
+        const auto* page = static_cast<const DataPageV3*>(current_page_.get());
+        int64_t levels_byte_size = InitializeLevelDecodersV3(*page);
+        InitializeDataDecoder(*page, levels_byte_size, &page->values_pipeline());
         return true;
       } else {
         // We don't know what this page type is. We're allowed to skip non-data
@@ -834,9 +934,53 @@ class ColumnReaderImplBase {
     return total_levels_length;
   }
 
+  int64_t InitializeLevelDecodersV3(const DataPageV3& page) {
+    num_buffered_values_ = page.num_values();
+    num_decoded_values_ = 0;
+
+    const uint8_t* buffer = page.data();
+    int64_t bytes_remaining = page.size();
+    int64_t offset = 0;
+
+    auto validate_length = [&](int64_t length) {
+      if (length < 0 || length > bytes_remaining) {
+        throw ParquetException("Invalid level length in DataPageV3");
+      }
+      return static_cast<int32_t>(length);
+    };
+
+    int32_t rep_len = validate_length(page.repetition_levels_byte_length());
+    if (rep_len > 0 && max_rep_level_ > 0) {
+      Encoding::type encoding = Encoding::RLE;
+      if (!page.repetition_level_encodings().empty()) {
+        encoding = page.repetition_level_encodings().front();
+      }
+      repetition_level_decoder_.SetData(encoding, max_rep_level_,
+                                        static_cast<int>(num_buffered_values_), buffer,
+                                        rep_len);
+    }
+    buffer += rep_len;
+    bytes_remaining -= rep_len;
+    offset += rep_len;
+
+    int32_t def_len = validate_length(page.definition_levels_byte_length());
+    if (def_len > 0 && max_def_level_ > 0) {
+      Encoding::type encoding = Encoding::RLE;
+      if (!page.definition_level_encodings().empty()) {
+        encoding = page.definition_level_encodings().front();
+      }
+      definition_level_decoder_.SetData(encoding, max_def_level_,
+                                        static_cast<int>(num_buffered_values_), buffer,
+                                        def_len);
+    }
+    offset += def_len;
+    return offset;
+  }
+
   // Get a decoder object for this page or create a new decoder if this is the
   // first page with this encoding.
-  void InitializeDataDecoder(const DataPage& page, int64_t levels_byte_size) {
+  void InitializeDataDecoder(const DataPage& page, int64_t levels_byte_size,
+                             const EncodingPipelineDescriptor* pipeline) {
     const uint8_t* buffer = page.data() + levels_byte_size;
     const int64_t data_size = page.size() - levels_byte_size;
 
@@ -877,6 +1021,9 @@ class ColumnReaderImplBase {
       }
     }
     current_encoding_ = encoding;
+    if (pipeline != nullptr) {
+      current_decoder_->SetEncodingPipeline(pipeline);
+    }
     current_decoder_->SetData(static_cast<int>(num_buffered_values_), buffer,
                               static_cast<int>(data_size));
   }

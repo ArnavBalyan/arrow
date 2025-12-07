@@ -50,6 +50,7 @@ class ColumnDescriptor;
 class ColumnIndexBuilder;
 class DataPage;
 class DictionaryPage;
+class SymbolTablePage;
 class Encryptor;
 class OffsetIndexBuilder;
 class WriterProperties;
@@ -113,6 +114,9 @@ class PARQUET_EXPORT PageWriter {
 
   // Return the number of uncompressed bytes written (including header size)
   virtual int64_t WriteDictionaryPage(const DictionaryPage& page) = 0;
+
+  // Return the number of uncompressed bytes written (including header size)
+  virtual int64_t WriteSymbolTablePage(const SymbolTablePage& page) = 0;
 
   /// \brief The total number of bytes written as serialized data and
   /// dictionary pages to the sink so far.

@@ -127,6 +127,16 @@ struct SortOrder {
   enum type { SIGNED, UNSIGNED, UNKNOWN };
 };
 
+// Mirrors parquet::SymbolTableType
+struct SymbolTable {
+  enum type {
+    FSST = 0,
+    FSST_V12 = 1,
+    ZSTD_DICTIONARY = 2,
+    UNDEFINED = 3  // Always last
+  };
+};
+
 namespace schema {
 
 struct DecimalMetadata {
@@ -538,8 +548,9 @@ struct Encoding {
     DELTA_BYTE_ARRAY = 7,
     RLE_DICTIONARY = 8,
     BYTE_STREAM_SPLIT = 9,
+    COMPOSITE = 10,
     // Should always be last element (except UNKNOWN)
-    UNDEFINED = 10,
+    UNDEFINED = 11,
     UNKNOWN = 999
   };
 };
@@ -589,6 +600,8 @@ struct PageType {
     INDEX_PAGE,
     DICTIONARY_PAGE,
     DATA_PAGE_V2,
+    SYMBOL_TABLE,
+    DATA_PAGE_V3,
     // Should always be last element
     UNDEFINED
   };

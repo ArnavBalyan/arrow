@@ -60,16 +60,17 @@
 
 namespace bit_util = arrow::bit_util;
 
-using arrow::Status;
-using arrow::VisitNullBitmapInline;
-using arrow::internal::AddWithOverflow;
-using arrow::internal::BitBlockCounter;
-using arrow::internal::checked_cast;
-using arrow::internal::VisitBitRuns;
-using arrow::util::SafeLoad;
-using arrow::util::SafeLoadAs;
-
 namespace parquet {
+
+using ::arrow::Status;
+using ::arrow::VisitNullBitmapInline;
+using ::arrow::internal::AddWithOverflow;
+using ::arrow::internal::BitBlockCounter;
+using ::arrow::internal::checked_cast;
+using ::arrow::internal::VisitBitRuns;
+using ::arrow::util::SafeLoad;
+using ::arrow::util::SafeLoadAs;
+
 namespace {
 
 // A helper class to abstract away differences between EncodingTraits<DType>::Accumulator
@@ -1924,6 +1925,325 @@ class RleBooleanDecoder : public TypedDecoderImpl<BooleanType>, public BooleanDe
   std::shared_ptr<::arrow::util::RleBitPackedDecoder<bool>> decoder_;
 };
 
+constexpr uint8_t kCompositeHeaderMagic[4] = {'C', 'M', 'P', '1'};
+constexpr uint8_t kCompositeHeaderVersion = 1;
+constexpr int32_t kCompositeMetadataLengthSize = 4;
+constexpr int32_t kCompositeLengthPrefix = 4;
+
+inline int32_t DecodeZigZag32(uint32_t value) {
+  return static_cast<int32_t>((value >> 1) ^ -static_cast<int32_t>(value & 1));
+}
+
+void ValidateCompositeStagesOrThrow(const std::vector<CompositeStage>& stages) {
+  if (stages.empty()) {
+    throw ParquetException("Composite encoding requires at least one stage");
+  }
+  bool terminal_stage_seen = false;
+  for (size_t i = 0; i < stages.size(); ++i) {
+    switch (stages[i]) {
+      case CompositeStage::DELTA_BINARY:
+        if (terminal_stage_seen) {
+          throw ParquetException("Delta stage cannot follow a terminal stage");
+        }
+        break;
+      case CompositeStage::RLE:
+        if (i != stages.size() - 1) {
+          throw ParquetException("RLE stage must be the last stage in the pipeline");
+        }
+        terminal_stage_seen = true;
+        break;
+      default:
+        throw ParquetException("Unsupported composite stage");
+    }
+  }
+  if (!terminal_stage_seen) {
+    throw ParquetException("Composite pipeline must terminate with an RLE stage");
+  }
+  if (stages.size() > std::numeric_limits<uint8_t>::max()) {
+    throw ParquetException("Composite pipeline cannot exceed 255 stages");
+  }
+}
+
+struct ParsedCompositeStage {
+  CompositeStage stage;
+  std::string metadata;
+};
+
+class CompositeInt32Decoder : public TypedDecoderImpl<Int32Type> {
+ public:
+  explicit CompositeInt32Decoder(const ColumnDescriptor* descr, MemoryPool* pool);
+
+  void SetEncodingPipeline(const EncodingPipelineDescriptor* pipeline) override {
+    pipeline_ = pipeline;
+  }
+
+  void SetData(int num_values, const uint8_t* data, int len) override;
+
+  int Decode(int32_t* buffer, int max_values) override;
+
+  int DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
+                  int64_t valid_bits_offset,
+                  typename EncodingTraits<Int32Type>::Accumulator* builder) override;
+
+  int DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
+                  int64_t valid_bits_offset,
+                  typename EncodingTraits<Int32Type>::DictAccumulator* builder) override;
+
+ private:
+  void InitializeStagesFromPipeline(const EncodingPipelineDescriptor& pipeline);
+  void EnsureDecoded();
+  std::vector<int32_t> RunPipeline() const;
+  std::vector<int32_t> DecodeRleStage(const ParsedCompositeStage& stage,
+                                      int64_t expected_values, const uint8_t* data,
+                                      int len) const;
+  std::vector<int32_t> DecodeDeltaStage(const ParsedCompositeStage& stage,
+                                        std::vector<int32_t> deltas,
+                                        int64_t expected_values) const;
+
+  MemoryPool* pool_;
+  const EncodingPipelineDescriptor* pipeline_;
+  std::vector<ParsedCompositeStage> stages_;
+  std::vector<int64_t> stage_value_counts_;
+  const uint8_t* payload_data_;
+  int payload_len_;
+  std::vector<int32_t> decoded_values_;
+  int decoded_offset_;
+  bool decoded_;
+};
+
+CompositeInt32Decoder::CompositeInt32Decoder(const ColumnDescriptor* descr, MemoryPool* pool)
+    : TypedDecoderImpl<Int32Type>(descr, Encoding::COMPOSITE),
+      pool_(pool),
+      pipeline_(nullptr),
+      payload_data_(nullptr),
+      payload_len_(0),
+      decoded_offset_(0),
+      decoded_(false) {}
+
+void CompositeInt32Decoder::SetData(int num_values, const uint8_t* data, int len) {
+  if (pipeline_ == nullptr) {
+    throw ParquetException("Composite decoder requires encoding pipeline metadata");
+  }
+  this->num_values_ = num_values;
+  decoded_values_.clear();
+  decoded_offset_ = 0;
+  decoded_ = false;
+  InitializeStagesFromPipeline(*pipeline_);
+  payload_data_ = data;
+  payload_len_ = len;
+  pipeline_ = nullptr;
+}
+
+int CompositeInt32Decoder::Decode(int32_t* buffer, int max_values) {
+  EnsureDecoded();
+  int available = static_cast<int>(decoded_values_.size() - decoded_offset_);
+  int to_copy = std::min(max_values, available);
+  if (to_copy == 0) {
+    return 0;
+  }
+  std::memcpy(buffer, decoded_values_.data() + decoded_offset_,
+              static_cast<size_t>(to_copy) * sizeof(int32_t));
+  decoded_offset_ += to_copy;
+  this->num_values_ -= to_copy;
+  return to_copy;
+}
+
+int CompositeInt32Decoder::DecodeArrow(
+    int num_values, int null_count, const uint8_t* valid_bits, int64_t valid_bits_offset,
+    typename EncodingTraits<Int32Type>::Accumulator* builder) {
+  if (num_values == 0) {
+    return 0;
+  }
+  if (null_count == 0) {
+    std::vector<int32_t> values(num_values);
+    int decoded = Decode(values.data(), num_values);
+    if (decoded != num_values) {
+      throw ParquetException("Composite decoder returned fewer values than requested");
+    }
+    PARQUET_THROW_NOT_OK(builder->AppendValues(values.data(), decoded));
+    return decoded;
+  }
+  std::vector<int32_t> values(num_values - null_count);
+  int decoded = Decode(values.data(), static_cast<int>(values.size()));
+  if (decoded != static_cast<int>(values.size())) {
+    throw ParquetException("Composite decoder returned fewer values than requested");
+  }
+  PARQUET_THROW_NOT_OK(builder->Reserve(num_values));
+  int value_index = 0;
+  VisitNullBitmapInline(
+      valid_bits, valid_bits_offset, num_values, null_count,
+      [&]() { builder->UnsafeAppend(values[value_index++]); },
+      [&]() { builder->UnsafeAppendNull(); });
+  return decoded;
+}
+
+int CompositeInt32Decoder::DecodeArrow(
+    int num_values, int null_count, const uint8_t* valid_bits, int64_t valid_bits_offset,
+    typename EncodingTraits<Int32Type>::DictAccumulator* builder) {
+  if (num_values == 0) {
+    return 0;
+  }
+  std::vector<int32_t> values(num_values - null_count);
+  int decoded = Decode(values.data(), static_cast<int>(values.size()));
+  if (decoded != static_cast<int>(values.size())) {
+    throw ParquetException("Composite decoder returned fewer values than requested");
+  }
+  PARQUET_THROW_NOT_OK(builder->Reserve(num_values));
+  int value_index = 0;
+  VisitNullBitmapInline(
+      valid_bits, valid_bits_offset, num_values, null_count,
+      [&]() { PARQUET_THROW_NOT_OK(builder->Append(values[value_index++])); },
+      [&]() { PARQUET_THROW_NOT_OK(builder->AppendNull()); });
+  return decoded;
+}
+
+void CompositeInt32Decoder::InitializeStagesFromPipeline(
+    const EncodingPipelineDescriptor& pipeline) {
+  stages_.clear();
+  stages_.reserve(pipeline.stages.size());
+  for (const auto& descriptor : pipeline.stages) {
+    ParsedCompositeStage stage;
+    switch (descriptor.encoding) {
+      case Encoding::DELTA_BINARY_PACKED:
+        stage.stage = CompositeStage::DELTA_BINARY;
+        break;
+      case Encoding::RLE:
+        stage.stage = CompositeStage::RLE;
+        break;
+      default:
+        throw ParquetException("Unsupported encoding in composite pipeline");
+    }
+    stage.metadata = descriptor.metadata;
+    stages_.push_back(std::move(stage));
+  }
+
+  std::vector<CompositeStage> stage_order;
+  stage_order.reserve(stages_.size());
+  for (const auto& entry : stages_) {
+    stage_order.push_back(entry.stage);
+  }
+  ValidateCompositeStagesOrThrow(stage_order);
+
+  stage_value_counts_.assign(stages_.size(), 0);
+  int64_t count = this->num_values_;
+  for (size_t idx = 0; idx < stages_.size(); ++idx) {
+    stage_value_counts_[idx] = count;
+    if (stages_[idx].stage == CompositeStage::DELTA_BINARY && count > 0) {
+      count = std::max<int64_t>(0, count - 1);
+    }
+  }
+}
+
+void CompositeInt32Decoder::EnsureDecoded() {
+  if (decoded_) {
+    return;
+  }
+  if (this->num_values_ == 0) {
+    decoded_ = true;
+    return;
+  }
+  decoded_values_ = RunPipeline();
+  decoded_offset_ = 0;
+  decoded_ = true;
+}
+
+std::vector<int32_t> CompositeInt32Decoder::RunPipeline() const {
+  std::vector<int32_t> current;
+  const uint8_t* byte_data = payload_data_;
+  int byte_len = payload_len_;
+
+  for (int idx = static_cast<int>(stages_.size()) - 1; idx >= 0; --idx) {
+    const auto& stage = stages_[idx];
+    int64_t expected_values = stage_value_counts_[idx];
+    switch (stage.stage) {
+      case CompositeStage::RLE:
+        current = DecodeRleStage(stage, expected_values, byte_data, byte_len);
+        byte_data = nullptr;
+        byte_len = 0;
+        break;
+      case CompositeStage::DELTA_BINARY:
+        current = DecodeDeltaStage(stage, std::move(current), expected_values);
+        break;
+      default:
+        throw ParquetException("Unsupported composite stage during decoding");
+    }
+  }
+  if (stage_value_counts_.empty() ||
+      static_cast<int64_t>(current.size()) != stage_value_counts_.front()) {
+    throw ParquetException("Composite decoding produced unexpected value count");
+  }
+  return current;
+}
+
+std::vector<int32_t> CompositeInt32Decoder::DecodeRleStage(
+    const ParsedCompositeStage& stage, int64_t expected_values, const uint8_t* data,
+    int len) const {
+  if (expected_values == 0) {
+    return {};
+  }
+  if (data == nullptr || len < kCompositeLengthPrefix) {
+    throw ParquetException("Composite RLE payload is missing");
+  }
+  if (stage.metadata.size() < 1) {
+    throw ParquetException("Composite RLE metadata missing bit width");
+  }
+  uint8_t bit_width = static_cast<uint8_t>(stage.metadata[0]);
+  uint32_t encoded_len =
+      ::arrow::bit_util::FromLittleEndian(SafeLoadAs<uint32_t>(data));
+  if (encoded_len > static_cast<uint32_t>(len - kCompositeLengthPrefix)) {
+    throw ParquetException("Composite RLE payload overruns buffer");
+  }
+  ::arrow::util::RleBitPackedDecoder<uint32_t> decoder(
+      data + kCompositeLengthPrefix, encoded_len, bit_width);
+  std::vector<uint32_t> zigzag(expected_values);
+  if (decoder.GetBatch(zigzag.data(), static_cast<int>(expected_values)) !=
+      expected_values) {
+    throw ParquetException("Composite RLE payload truncated");
+  }
+  std::vector<int32_t> output(expected_values);
+  for (int64_t i = 0; i < expected_values; ++i) {
+    output[static_cast<size_t>(i)] = DecodeZigZag32(zigzag[static_cast<size_t>(i)]);
+  }
+  return output;
+}
+
+std::vector<int32_t> CompositeInt32Decoder::DecodeDeltaStage(
+    const ParsedCompositeStage& stage, std::vector<int32_t> deltas,
+    int64_t expected_values) const {
+  if (expected_values == 0) {
+    return {};
+  }
+  if (stage.metadata.empty()) {
+    throw ParquetException("Composite delta metadata missing");
+  }
+  bool has_first_value = stage.metadata[0] != 0;
+  if (!has_first_value) {
+    if (expected_values != 0) {
+      throw ParquetException("Composite delta metadata inconsistent with value count");
+    }
+    return {};
+  }
+  if (stage.metadata.size() < 1 + sizeof(int32_t)) {
+    throw ParquetException("Composite delta metadata truncated");
+  }
+  int32_t first_value =
+      ::arrow::bit_util::FromLittleEndian(SafeLoadAs<int32_t>(
+          reinterpret_cast<const uint8_t*>(stage.metadata.data() + 1)));
+  if (expected_values > 0 &&
+      static_cast<int64_t>(deltas.size()) != std::max<int64_t>(int64_t{0},
+                                                               expected_values - 1)) {
+    throw ParquetException("Composite delta stage produced unexpected delta count");
+  }
+  std::vector<int32_t> output(expected_values);
+  output[0] = first_value;
+  for (int64_t i = 1; i < expected_values; ++i) {
+    output[static_cast<size_t>(i)] =
+        output[static_cast<size_t>(i - 1)] + deltas[static_cast<size_t>(i - 1)];
+  }
+  return output;
+}
+
+
 // ----------------------------------------------------------------------
 // DELTA_BYTE_ARRAY decoder
 
@@ -2331,7 +2651,12 @@ class ByteStreamSplitDecoder<FLBAType> : public ByteStreamSplitDecoderBase<FLBAT
 std::unique_ptr<Decoder> MakeDecoder(Type::type type_num, Encoding::type encoding,
                                      const ColumnDescriptor* descr,
                                      ::arrow::MemoryPool* pool) {
-  if (encoding == Encoding::PLAIN) {
+  if (encoding == Encoding::COMPOSITE) {
+    if (type_num != Type::INT32) {
+      throw ParquetException("Composite decoding currently supports INT32 values only");
+    }
+    return std::make_unique<CompositeInt32Decoder>(descr, pool);
+  } else if (encoding == Encoding::PLAIN) {
     switch (type_num) {
       case Type::BOOLEAN:
         return std::make_unique<PlainBooleanDecoder>(descr);

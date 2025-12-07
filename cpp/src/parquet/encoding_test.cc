@@ -2030,6 +2030,40 @@ TEST_F(TestRleBooleanEncoding, AllNull) {
       /*null_probability*/ 1));
 }
 
+TEST(CompositeEncodingTest, Int32DeltaRleRoundTrip) {
+  auto prim_node = schema::PrimitiveNode::Make("int_col", Repetition::REQUIRED, Type::INT32);
+  auto group_node = schema::GroupNode::Make("schema", Repetition::REQUIRED, {prim_node});
+  SchemaDescriptor descr;
+  descr.Init(group_node);
+
+  CompositeEncodingSpec spec;
+  spec.stages = {CompositeStage::DELTA_BINARY, CompositeStage::RLE};
+
+  auto encoder = MakeEncoder(Type::INT32, Encoding::COMPOSITE, /*use_dictionary=*/false,
+                             descr.Column(0), ::arrow::default_memory_pool(), &spec);
+  auto typed_encoder = dynamic_cast<TypedEncoder<Int32Type>*>(encoder.get());
+  ASSERT_NE(typed_encoder, nullptr);
+
+  std::vector<int32_t> values = {100, 101, 101, 150, 150, 200, 210, 210, 210, 211};
+  typed_encoder->Put(values.data(), static_cast<int>(values.size()));
+  auto buffer = encoder->FlushValues();
+  const EncodingPipelineDescriptor* pipeline = encoder->encoding_pipeline_descriptor();
+  ASSERT_NE(pipeline, nullptr);
+
+  auto decoder =
+      MakeDecoder(Type::INT32, Encoding::COMPOSITE, descr.Column(0),
+                  ::arrow::default_memory_pool());
+  auto typed_decoder = dynamic_cast<TypedDecoder<Int32Type>*>(decoder.get());
+  ASSERT_NE(typed_decoder, nullptr);
+  typed_decoder->SetEncodingPipeline(pipeline);
+
+  typed_decoder->SetData(static_cast<int>(values.size()), buffer->data(), buffer->size());
+  std::vector<int32_t> decoded(values.size());
+  int decoded_values = typed_decoder->Decode(decoded.data(), static_cast<int>(decoded.size()));
+  ASSERT_EQ(decoded_values, static_cast<int>(values.size()));
+  ASSERT_EQ(decoded, values);
+}
+
 // ----------------------------------------------------------------------
 // DELTA_LENGTH_BYTE_ARRAY encode/decode tests.
 
@@ -2588,7 +2622,7 @@ TEST(DeltaByteArrayEncodingAdHoc, ArrowDirectPut) {
     auto values = R"(["καλημέρα", "καμηλιέρη", "καμηλιέρη", "καλημέρα"])";
     auto prefix_lengths = ::arrow::ArrayFromJSON(::arrow::int32(), R"([0, 5, 18, 5])");
     auto suffix_lengths = ::arrow::ArrayFromJSON(::arrow::int32(), R"([16, 13, 0, 11])");
-    const std::string suffix_data = "καλημέρα\xbcηλιέρη\xbbημέρα";
+  const std::string suffix_data = "καλημέρα\xbcηλιέρη\xbbημέρα";
     CheckEncodeDecode(values, prefix_lengths, suffix_lengths, suffix_data);
   }
 }

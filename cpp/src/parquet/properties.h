@@ -18,6 +18,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +28,7 @@
 #include "arrow/type_fwd.h"
 #include "arrow/util/compression.h"
 #include "arrow/util/type_fwd.h"
+#include "parquet/composite_encoding.h"
 #include "parquet/encryption/encryption.h"
 #include "parquet/exception.h"
 #include "parquet/parquet_version.h"
@@ -45,7 +47,7 @@ namespace parquet {
 /// forward compatibility issues (older versions of the library will be unable
 /// to read the files). Note that some Parquet implementations do not implement
 /// DataPageV2 at all.
-enum class ParquetDataPageVersion { V1, V2 };
+enum class ParquetDataPageVersion { V1, V2, V3 };
 
 /// Controls the level of size statistics that are written to the file.
 enum class SizeStatisticsLevel : uint8_t {
@@ -215,6 +217,10 @@ class PARQUET_EXPORT ColumnProperties {
     page_index_enabled_ = page_index_enabled;
   }
 
+  void set_composite_encoding(const CompositeEncodingSpec& spec) {
+    composite_encoding_spec_ = spec;
+  }
+
   Encoding::type encoding() const { return encoding_; }
 
   Compression::type compression() const { return codec_; }
@@ -236,6 +242,10 @@ class PARQUET_EXPORT ColumnProperties {
 
   bool page_index_enabled() const { return page_index_enabled_; }
 
+  const std::optional<CompositeEncodingSpec>& composite_encoding() const {
+    return composite_encoding_spec_;
+  }
+
  private:
   Encoding::type encoding_;
   Compression::type codec_;
@@ -244,6 +254,7 @@ class PARQUET_EXPORT ColumnProperties {
   size_t max_stats_size_;
   std::shared_ptr<CodecOptions> codec_options_;
   bool page_index_enabled_;
+  std::optional<CompositeEncodingSpec> composite_encoding_spec_;
 };
 
 // EXPERIMENTAL: Options for content-defined chunking.
@@ -496,6 +507,20 @@ class PARQUET_EXPORT WriterProperties {
     Builder* encoding(const std::shared_ptr<schema::ColumnPath>& path,
                       Encoding::type encoding_type) {
       return this->encoding(path->ToDotString(), encoding_type);
+    }
+
+    /// \brief Configure a composite encoding pipeline for the specified column.
+    Builder* composite_encoding(const std::string& path, CompositeEncodingSpec spec) {
+      composite_encodings_[path] = std::move(spec);
+      encodings_[path] = Encoding::COMPOSITE;
+      dictionary_enabled_[path] = false;
+      return this;
+    }
+
+    /// \brief Configure a composite encoding pipeline for the specified column.
+    Builder* composite_encoding(const std::shared_ptr<schema::ColumnPath>& path,
+                                CompositeEncodingSpec spec) {
+      return this->composite_encoding(path->ToDotString(), std::move(spec));
     }
 
     /// Specify compression codec in general for all columns.
@@ -776,6 +801,8 @@ class PARQUET_EXPORT WriterProperties {
         get(item.first).set_statistics_enabled(item.second);
       for (const auto& item : page_index_enabled_)
         get(item.first).set_page_index_enabled(item.second);
+      for (const auto& item : composite_encodings_)
+        get(item.first).set_composite_encoding(item.second);
 
       return std::shared_ptr<WriterProperties>(new WriterProperties(
           pool_, dictionary_pagesize_limit_, write_batch_size_, max_row_group_length_,
@@ -815,6 +842,7 @@ class PARQUET_EXPORT WriterProperties {
     std::unordered_map<std::string, bool> dictionary_enabled_;
     std::unordered_map<std::string, bool> statistics_enabled_;
     std::unordered_map<std::string, bool> page_index_enabled_;
+    std::unordered_map<std::string, CompositeEncodingSpec> composite_encodings_;
 
     bool content_defined_chunking_enabled_;
     CdcOptions content_defined_chunking_options_;
@@ -880,6 +908,12 @@ class PARQUET_EXPORT WriterProperties {
 
   Encoding::type encoding(const std::shared_ptr<schema::ColumnPath>& path) const {
     return column_properties(path).encoding();
+  }
+
+  const CompositeEncodingSpec* composite_encoding(
+      const std::shared_ptr<schema::ColumnPath>& path) const {
+    const auto& spec = column_properties(path).composite_encoding();
+    return spec ? &(*spec) : nullptr;
   }
 
   Compression::type compression(const std::shared_ptr<schema::ColumnPath>& path) const {

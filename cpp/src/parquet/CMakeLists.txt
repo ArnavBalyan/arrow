@@ -166,6 +166,8 @@ set(PARQUET_SRCS
     column_writer.cc
     decoder.cc
     encoder.cc
+    data_page_v3_metadata.cc
+    composite_encoding.cc
     encryption/encryption.cc
     encryption/internal_file_decryptor.cc
     encryption/internal_file_encryptor.cc
@@ -385,6 +387,7 @@ add_parquet_test(internals-test
                  types_test.cc)
 
 add_parquet_test(encoding-test SOURCES encoding_test.cc)
+add_parquet_test(composite-encoding-test SOURCES composite_encoding_test.cc)
 
 add_parquet_test(reader-test
                  SOURCES

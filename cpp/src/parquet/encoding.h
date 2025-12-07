@@ -24,6 +24,8 @@
 
 #include "arrow/type_fwd.h"
 
+#include "parquet/composite_encoding.h"
+#include "parquet/data_page_v3_metadata.h"
 #include "parquet/exception.h"
 #include "parquet/platform.h"
 #include "parquet/types.h"
@@ -170,6 +172,28 @@ class Encoder {
   virtual int64_t ReportUnencodedDataBytes() = 0;
 
   virtual MemoryPool* memory_pool() const = 0;
+
+  /// \brief Describe the physical Parquet type consumed by this encoder.
+  ///
+  /// When encoders are chained together, the output type produced by the
+  /// previous stage must match the input type required by the next stage.
+  /// The default implementation returns Type::UNDEFINED indicating that the
+  /// encoder consumes the column's physical type directly.
+  virtual Type::type input_type() const { return Type::UNDEFINED; }
+
+  /// \brief Describe the physical Parquet type produced by this encoder.
+  ///
+  /// For most encoders this matches the input type, but encoders like the
+  /// dictionary encoder produce INT32 indices instead of the original values.
+  virtual Type::type output_type() const { return Type::UNDEFINED; }
+
+  /// \brief Return the encoding pipeline that produced the current buffer, if any.
+  ///
+  /// Only composite encoders override this method. The returned pointer is valid
+  /// until the next call to FlushValues().
+  virtual const EncodingPipelineDescriptor* encoding_pipeline_descriptor() const {
+    return nullptr;
+  }
 };
 
 // Base class for value encoders. Since encoders may or not have state (e.g.,
@@ -189,6 +213,10 @@ class TypedEncoder : virtual public Encoder {
 
   virtual void PutSpaced(const T* src, int num_values, const uint8_t* valid_bits,
                          int64_t valid_bits_offset) = 0;
+
+  Type::type input_type() const override { return DType::type_num; }
+
+  Type::type output_type() const override { return DType::type_num; }
 };
 
 template <typename DType>
@@ -239,6 +267,8 @@ class DictEncoder : virtual public TypedEncoder<DType> {
   /// \param[in] values the dictionary values. Only valid for certain
   /// Parquet/Arrow type combinations, like BYTE_ARRAY/BinaryArray
   virtual void PutDictionary(const ::arrow::Array& values) = 0;
+
+  Type::type output_type() const override { return Type::INT32; }
 };
 
 // ----------------------------------------------------------------------
@@ -256,6 +286,11 @@ class Decoder {
   // `len`, on the other hand, is the size in bytes of the data buffer and
   // directly relates to the number of physical values.
   virtual void SetData(int num_values, const uint8_t* data, int len) = 0;
+
+  // Provide additional metadata describing the encoding pipeline that produced
+  // the encoded values. Implementations that do not participate in composite
+  // pipelines can ignore this hook.
+  virtual void SetEncodingPipeline(const EncodingPipelineDescriptor* /*pipeline*/) {}
 
   // Returns the number of values left (for the last call to SetData()). This is
   // the number of values left in this page.
@@ -410,7 +445,8 @@ PARQUET_EXPORT
 std::unique_ptr<Encoder> MakeEncoder(
     Type::type type_num, Encoding::type encoding, bool use_dictionary = false,
     const ColumnDescriptor* descr = NULLPTR,
-    ::arrow::MemoryPool* pool = ::arrow::default_memory_pool());
+    ::arrow::MemoryPool* pool = ::arrow::default_memory_pool(),
+    const CompositeEncodingSpec* composite_spec = nullptr);
 
 template <typename DType>
 std::unique_ptr<typename EncodingTraits<DType>::Encoder> MakeTypedEncoder(

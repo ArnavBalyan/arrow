@@ -34,6 +34,7 @@
 #include "arrow/util/bit_stream_utils_internal.h"
 #include "arrow/util/bit_util.h"
 #include "arrow/util/bitmap_ops.h"
+#include "arrow/util/bitmap_reader.h"
 #include "arrow/util/byte_stream_split_internal.h"
 #include "arrow/util/checked_cast.h"
 #include "arrow/util/hashing.h"
@@ -56,18 +57,19 @@
 
 namespace bit_util = arrow::bit_util;
 
-using arrow::Status;
-using arrow::internal::AddWithOverflow;
-using arrow::internal::checked_cast;
-using arrow::internal::SafeSignedSubtract;
-using arrow::util::SafeLoad;
-using arrow::util::SafeLoadAs;
+namespace parquet {
+
+using ::arrow::Status;
+using ::arrow::internal::AddWithOverflow;
+using ::arrow::internal::checked_cast;
+using ::arrow::internal::SafeSignedSubtract;
+using ::arrow::util::SafeLoad;
+using ::arrow::util::SafeLoadAs;
+
+namespace {
 
 template <typename T>
 using ArrowPoolVector = std::vector<T, ::arrow::stl::allocator<T>>;
-
-namespace parquet {
-namespace {
 
 // The Parquet spec isn't very clear whether ByteArray lengths are signed or
 // unsigned, but the Java implementation uses signed ints.
@@ -448,7 +450,7 @@ int64_t RlePreserveBufferSize(int64_t num_values, int bit_width) {
 }
 
 /// See the dictionary encoding section of
-/// https://github.com/Parquet/parquet-format.  The encoding supports
+/// https://github.com/Parquet/parquet-format.  The  encoding supports
 /// streaming encoding. Values are encoded as they are added while the
 /// dictionary is being constructed. At any time, the buffered values
 /// can be written out with the current dictionary size. More values
@@ -1749,6 +1751,213 @@ std::shared_ptr<Buffer> RleBooleanEncoder::FlushValues() {
   return buffer;
 }
 
+constexpr int32_t kCompositeLengthPrefix = 4;
+
+inline uint32_t EncodeZigZag32(int32_t value) {
+  return static_cast<uint32_t>((value << 1) ^ (value >> 31));
+}
+
+inline void AppendLittleEndian32(std::vector<uint8_t>* out, int32_t value) {
+  const int32_t le_value = ::arrow::bit_util::ToLittleEndian(value);
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&le_value);
+  out->insert(out->end(), bytes, bytes + sizeof(int32_t));
+}
+
+inline void AppendLittleEndian32(std::string* out, uint32_t value) {
+  const uint32_t le_value = ::arrow::bit_util::ToLittleEndian(value);
+  out->append(reinterpret_cast<const char*>(&le_value), sizeof(le_value));
+}
+
+inline void AppendLittleEndian32(::arrow::BufferBuilder* builder, uint32_t value) {
+  const uint32_t le_value = ::arrow::bit_util::ToLittleEndian(value);
+  PARQUET_THROW_NOT_OK(builder->Append(&le_value, sizeof(uint32_t)));
+}
+
+void ValidateCompositeSpecOrThrow(const CompositeEncodingSpec& spec) {
+  if (spec.empty()) {
+    throw ParquetException("Composite encoding requires at least one stage");
+  }
+  bool terminal_stage_seen = false;
+  for (size_t i = 0; i < spec.stages.size(); ++i) {
+    switch (spec.stages[i]) {
+      case CompositeStage::DELTA_BINARY:
+        if (terminal_stage_seen) {
+          throw ParquetException("Delta stage cannot follow a terminal stage");
+        }
+        break;
+      case CompositeStage::RLE:
+        if (i != spec.stages.size() - 1) {
+          throw ParquetException("RLE stage must be the last stage in the pipeline");
+        }
+        terminal_stage_seen = true;
+        break;
+      default:
+        throw ParquetException("Unsupported composite stage");
+    }
+  }
+  if (!terminal_stage_seen) {
+    throw ParquetException("Composite pipeline must terminate with an RLE stage");
+  }
+  if (spec.stages.size() > std::numeric_limits<uint8_t>::max()) {
+    throw ParquetException("Composite pipeline cannot exceed 255 stages");
+  }
+}
+
+Encoding::type StageToEncoding(CompositeStage stage) {
+  switch (stage) {
+    case CompositeStage::DELTA_BINARY:
+      return Encoding::DELTA_BINARY_PACKED;
+    case CompositeStage::RLE:
+      return Encoding::RLE;
+    default:
+      throw ParquetException("Unsupported composite stage");
+  }
+}
+
+class CompositeInt32Encoder : public EncoderImpl, public TypedEncoder<Int32Type> {
+ public:
+  CompositeInt32Encoder(const ColumnDescriptor* descr, MemoryPool* pool,
+                        CompositeEncodingSpec spec)
+      : EncoderImpl(descr, Encoding::COMPOSITE, pool), spec_(std::move(spec)) {
+    ValidateCompositeSpecOrThrow(spec_);
+  }
+
+  void Put(const int32_t* src, int num_values) override {
+    if (num_values <= 0) {
+      return;
+    }
+    values_.insert(values_.end(), src, src + num_values);
+  }
+
+  void PutSpaced(const int32_t* src, int num_values, const uint8_t* valid_bits,
+                 int64_t valid_bits_offset) override {
+    if (valid_bits == nullptr) {
+      Put(src, num_values);
+      return;
+    }
+    ::arrow::internal::BitmapReader reader(valid_bits, valid_bits_offset, num_values);
+    for (int64_t i = 0; i < num_values; ++i) {
+      if (reader.IsSet()) {
+        values_.push_back(src[i]);
+      }
+      reader.Next();
+    }
+  }
+
+  int64_t EstimatedDataEncodedSize() override {
+    return static_cast<int64_t>(values_.size() * sizeof(int32_t));
+  }
+
+  void Clear() {
+    values_.clear();
+    pipeline_descriptor_.stages.clear();
+  }
+
+  void Put(const ::arrow::Array& values) override {
+    const auto& typed_array = static_cast<const ::arrow::Int32Array&>(values);
+    const int32_t* data = typed_array.raw_values();
+    Put(data, static_cast<int>(typed_array.length()));
+  }
+
+  const EncodingPipelineDescriptor* encoding_pipeline_descriptor() const override {
+    return pipeline_descriptor_.empty() ? nullptr : &pipeline_descriptor_;
+  }
+
+  std::shared_ptr<Buffer> FlushValues() override {
+    pipeline_descriptor_.stages.clear();
+    if (values_.empty()) {
+      return std::make_shared<Buffer>(nullptr, 0);
+    }
+
+    std::vector<int32_t> working = values_;
+    std::shared_ptr<Buffer> payload;
+    pipeline_descriptor_.stages.reserve(spec_.stages.size());
+
+    for (CompositeStage stage : spec_.stages) {
+      switch (stage) {
+        case CompositeStage::DELTA_BINARY: {
+          auto [next_working, metadata] = ApplyDeltaStage(std::move(working));
+          working = std::move(next_working);
+          pipeline_descriptor_.stages.emplace_back(StageToEncoding(stage),
+                                                   std::move(metadata));
+          break;
+        }
+        case CompositeStage::RLE: {
+          auto [buffer, metadata] = ApplyRleStage(working);
+          payload = std::move(buffer);
+          working.clear();
+          pipeline_descriptor_.stages.emplace_back(StageToEncoding(stage),
+                                                   std::move(metadata));
+          break;
+        }
+        default:
+          throw ParquetException("Unsupported composite encoding stage");
+      }
+    }
+
+    if (payload == nullptr || pipeline_descriptor_.stages.empty()) {
+      throw ParquetException("Composite pipeline did not produce a payload");
+    }
+
+    values_.clear();
+    return payload;
+  }
+
+ private:
+  std::pair<std::vector<int32_t>, std::string> ApplyDeltaStage(
+      std::vector<int32_t> input) {
+    std::string metadata;
+    metadata.push_back(input.empty() ? 0 : 1);
+    if (input.empty()) {
+      return {std::vector<int32_t>(), metadata};
+    }
+    AppendLittleEndian32(&metadata, input.front());
+    std::vector<int32_t> deltas;
+    deltas.reserve(input.size() > 0 ? input.size() - 1 : 0);
+    for (size_t i = 1; i < input.size(); ++i) {
+      deltas.push_back(input[i] - input[i - 1]);
+    }
+    return {std::move(deltas), std::move(metadata)};
+  }
+
+  std::pair<std::shared_ptr<Buffer>, std::string> ApplyRleStage(
+      const std::vector<int32_t>& input) {
+    uint8_t bit_width = 1;
+    uint32_t max_value = 0;
+    std::vector<uint32_t> zigzag(input.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+      uint32_t encoded = EncodeZigZag32(input[i]);
+      zigzag[i] = encoded;
+      max_value = std::max(max_value, encoded);
+    }
+    if (max_value > 0) {
+      bit_width = static_cast<uint8_t>(::arrow::bit_util::Log2(max_value) + 1);
+    }
+    bit_width = std::max<uint8_t>(bit_width, 1);
+    std::string metadata(1, static_cast<char>(bit_width));
+
+    int64_t max_buffer_size =
+        ::arrow::util::RleBitPackedEncoder::MaxBufferSize(bit_width, zigzag.size());
+    auto buffer = AllocateBuffer(pool_, kCompositeLengthPrefix + max_buffer_size);
+    ::arrow::util::RleBitPackedEncoder encoder(buffer->mutable_data() + kCompositeLengthPrefix,
+                                               static_cast<int>(max_buffer_size), bit_width);
+    for (uint32_t value : zigzag) {
+      encoder.Put(value);
+    }
+    encoder.Flush();
+    const uint32_t encoded_len = encoder.len();
+    ::arrow::util::SafeStore(buffer->mutable_data(),
+                             ::arrow::bit_util::ToLittleEndian(encoded_len));
+    PARQUET_THROW_NOT_OK(
+        buffer->Resize(kCompositeLengthPrefix + encoded_len, /*shrink_to_fit=*/false));
+    return {buffer, std::move(metadata)};
+  }
+
+  CompositeEncodingSpec spec_;
+  std::vector<int32_t> values_;
+  EncodingPipelineDescriptor pipeline_descriptor_;
+};
+
 }  // namespace
 
 // ----------------------------------------------------------------------
@@ -1756,7 +1965,18 @@ std::shared_ptr<Buffer> RleBooleanEncoder::FlushValues() {
 
 std::unique_ptr<Encoder> MakeEncoder(Type::type type_num, Encoding::type encoding,
                                      bool use_dictionary, const ColumnDescriptor* descr,
-                                     MemoryPool* pool) {
+                                     MemoryPool* pool,
+                                     const CompositeEncodingSpec* composite_spec) {
+  if (encoding == Encoding::COMPOSITE) {
+    if (type_num != Type::INT32) {
+      throw ParquetException("Composite encoding currently supports INT32 values only");
+    }
+    if (composite_spec == nullptr) {
+      throw ParquetException("Composite encoding requires a stage specification");
+    }
+    return std::make_unique<CompositeInt32Encoder>(descr, pool, *composite_spec);
+  }
+
   if (use_dictionary) {
     switch (type_num) {
       case Type::INT32:

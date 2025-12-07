@@ -281,7 +281,7 @@ struct Statistics {
     */
    1: optional binary max;
    2: optional binary min;
-   /** 
+   /**
     * Count of null values in the column.
     *
     * Writers SHOULD always write this field even if it is zero (i.e. no null value)
@@ -629,6 +629,11 @@ enum Encoding {
       Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
    */
   BYTE_STREAM_SPLIT = 9;
+
+  /**
+   * Describes a dynamically composed sequence of encodings.
+   */
+  COMPOSITE = 10;
 }
 
 /**
@@ -656,6 +661,8 @@ enum PageType {
   INDEX_PAGE = 1;
   DICTIONARY_PAGE = 2;
   DATA_PAGE_V2 = 3;
+  SYMBOL_TABLE = 4;
+  DATA_PAGE_V3 = 5;
 }
 
 /**
@@ -712,6 +719,23 @@ struct DictionaryPageHeader {
   3: optional bool is_sorted;
 }
 
+/** Enumerates supported shared symbol table formats. */
+enum SymbolTableType {
+  FSST = 0;
+  FSST_V12 = 1;
+  ZSTD_DICTIONARY = 2;
+}
+
+/**
+ * Symbol table pages hold shared metadata (e.g. compression dictionaries) that can be
+ * referenced by subsequent dictionary or data pages within the column chunk.
+ * Symbol table pages must appear before the dictionary page (if present) and before
+ * any data pages in the column chunk.
+ */
+struct SymbolTablePageHeader {
+  1: required SymbolTableType symbol_table_type;
+}
+
 /**
  * New page format allowing reading levels without decompressing the data
  * Repetition and definition levels are uncompressed
@@ -745,6 +769,46 @@ struct DataPageHeaderV2 {
   is compressed with the compression_codec.
   If missing it is considered compressed */
   7: optional bool is_compressed = true;
+
+  /** Optional statistics for the data in this page **/
+  8: optional Statistics statistics;
+}
+
+/**
+ * Data page header V3 describes pages that contain block-oriented encodings and
+ * optional embedded symbol tables. The exact interpretation of the metadata fields
+ * is codec-specific and may evolve over time.
+ */
+struct DataPageHeaderV3 {
+  /** Number of values, including NULLs, in this data page **/
+  1: required i32 num_values
+
+  /** Number of NULL values in this data page **/
+  2: required i32 num_nulls
+
+  /** Number of rows covered by this page **/
+  3: required i32 num_rows
+
+  /** Primary encoding applied to the values buffer **/
+  4: required Encoding values_encoding
+
+  /**
+   * Encodings applied to repetition levels (if absent, repetition levels are omitted).
+   * Multiple encodings indicate a pipeline applied sequentially.
+   */
+  5: optional list<Encoding> repetition_level_encodings
+
+  /**
+   * Encodings applied to definition levels (if absent, definition levels are omitted).
+   * Multiple encodings indicate a pipeline applied sequentially.
+   */
+  6: optional list<Encoding> definition_level_encodings
+
+  /**
+   * Codec-specific opaque metadata for interpreting the page body.
+   * This may include block descriptors, embedded symbol tables, etc.
+   */
+  7: optional binary encoding_metadata
 
   /** Optional statistics for the data in this page **/
   8: optional Statistics statistics;
@@ -829,6 +893,8 @@ struct PageHeader {
   6: optional IndexPageHeader index_page_header;
   7: optional DictionaryPageHeader dictionary_page_header;
   8: optional DataPageHeaderV2 data_page_header_v2;
+  9: optional SymbolTablePageHeader symbol_table_page_header;
+  10: optional DataPageHeaderV3 data_page_header_v3;
 }
 
 /**
@@ -893,7 +959,7 @@ struct ColumnMetaData {
   /** total byte size of all uncompressed pages in this column chunk (including the headers) **/
   6: required i64 total_uncompressed_size
 
-  /** total byte size of all compressed, and potentially encrypted, pages 
+  /** total byte size of all compressed, and potentially encrypted, pages
    *  in this column chunk (including the headers) **/
   7: required i64 total_compressed_size
 
@@ -938,6 +1004,13 @@ struct ColumnMetaData {
 
   /** Optional statistics specific for Geometry and Geography logical types */
   17: optional GeospatialStatistics geospatial_statistics;
+
+  /**
+   * Offsets, from the start of the file, of symbol table pages referenced by this
+   * column chunk. Symbol table pages must precede the first data page and the
+   * dictionary page (if present).
+   */
+  18: optional list<i64> symbol_table_page_offsets;
 }
 
 struct EncryptionWithFooterKey {
@@ -1020,10 +1093,10 @@ struct RowGroup {
    * in this row group **/
   5: optional i64 file_offset
 
-  /** Total byte size of all compressed (and potentially encrypted) column data 
+  /** Total byte size of all compressed (and potentially encrypted) column data
    *  in this row group **/
   6: optional i64 total_compressed_size
-  
+
   /** Row group ordinal in the file **/
   7: optional i16 ordinal
 }
@@ -1090,7 +1163,7 @@ union ColumnOrder {
    *     - If the min is +0, the row group may contain -0 values as well.
    *     - If the max is -0, the row group may contain +0 values as well.
    *     - When looking for NaN values, min and max should be ignored.
-   * 
+   *
    *     When writing statistics the following rules should be followed:
    *     - NaNs should not be written to min or max statistics fields.
    *     - If the computed max value is zero (whether negative or positive),
@@ -1183,13 +1256,13 @@ struct ColumnIndex {
   4: required BoundaryOrder boundary_order
 
   /**
-   * A list containing the number of null values for each page 
+   * A list containing the number of null values for each page
    *
    * Writers SHOULD always write this field even if no null values
    * are present or the column is not nullable.
-   * Readers MUST distinguish between null_counts not being present 
+   * Readers MUST distinguish between null_counts not being present
    * and null_count being 0.
-   * If null_counts are not present, readers MUST NOT assume all 
+   * If null_counts are not present, readers MUST NOT assume all
    * null counts are 0.
    */
   5: optional list<i64> null_counts
@@ -1290,30 +1363,30 @@ struct FileMetaData {
    */
   7: optional list<ColumnOrder> column_orders;
 
-  /** 
+  /**
    * Encryption algorithm. This field is set only in encrypted files
    * with plaintext footer. Files with encrypted footer store algorithm id
    * in FileCryptoMetaData structure.
    */
   8: optional EncryptionAlgorithm encryption_algorithm
 
-  /** 
-   * Retrieval metadata of key used for signing the footer. 
-   * Used only in encrypted files with plaintext footer. 
-   */ 
+  /**
+   * Retrieval metadata of key used for signing the footer.
+   * Used only in encrypted files with plaintext footer.
+   */
   9: optional binary footer_signing_key_metadata
 }
 
 /** Crypto metadata for files with encrypted footer **/
 struct FileCryptoMetaData {
-  /** 
+  /**
    * Encryption algorithm. This field is only used for files
    * with encrypted footer. Files with plaintext footer store algorithm id
    * inside footer (FileMetaData structure).
    */
   1: required EncryptionAlgorithm encryption_algorithm
-    
-  /** Retrieval metadata of key used for encryption of footer, 
+
+  /** Retrieval metadata of key used for encryption of footer,
    *  and (possibly) columns **/
   2: optional binary key_metadata
 }

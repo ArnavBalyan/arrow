@@ -26,6 +26,7 @@
 #include <optional>
 #include <string>
 
+#include "parquet/data_page_v3_metadata.h"
 #include "parquet/size_statistics.h"
 #include "parquet/statistics.h"
 #include "parquet/types.h"
@@ -155,6 +156,54 @@ class DataPageV2 : public DataPage {
   bool is_compressed_;
 };
 
+class DataPageV3 : public DataPage {
+ public:
+  DataPageV3(const std::shared_ptr<Buffer>& buffer, int32_t num_values, int32_t num_nulls,
+             int32_t num_rows, Encoding::type encoding, int64_t uncompressed_size,
+             EncodedStatistics statistics, std::optional<int64_t> first_row_index,
+             SizeStatistics size_statistics, std::vector<Encoding::type> rep_level_encodings,
+             std::vector<Encoding::type> def_level_encodings,
+             DataPageV3Metadata metadata, std::string encoding_metadata)
+      : DataPage(PageType::DATA_PAGE_V3, buffer, num_values, encoding, uncompressed_size,
+                 std::move(statistics), std::move(first_row_index),
+                 std::move(size_statistics)),
+        num_nulls_(num_nulls),
+        num_rows_(num_rows),
+        repetition_level_encodings_(std::move(rep_level_encodings)),
+        definition_level_encodings_(std::move(def_level_encodings)),
+        metadata_(std::move(metadata)),
+        encoding_metadata_(std::move(encoding_metadata)) {}
+
+  int32_t num_nulls() const { return num_nulls_; }
+  int32_t num_rows() const { return num_rows_; }
+  int64_t repetition_levels_byte_length() const {
+    return metadata_.repetition_levels_length;
+  }
+  int64_t definition_levels_byte_length() const {
+    return metadata_.definition_levels_length;
+  }
+  int64_t values_byte_length() const { return metadata_.values_length; }
+
+  const std::vector<Encoding::type>& repetition_level_encodings() const {
+    return repetition_level_encodings_;
+  }
+  const std::vector<Encoding::type>& definition_level_encodings() const {
+    return definition_level_encodings_;
+  }
+  const EncodingPipelineDescriptor& values_pipeline() const {
+    return metadata_.values_pipeline;
+  }
+  const std::string& encoding_metadata() const { return encoding_metadata_; }
+
+ private:
+  int32_t num_nulls_;
+  int32_t num_rows_;
+  std::vector<Encoding::type> repetition_level_encodings_;
+  std::vector<Encoding::type> definition_level_encodings_;
+  DataPageV3Metadata metadata_;
+  std::string encoding_metadata_;
+};
+
 class DictionaryPage : public Page {
  public:
   DictionaryPage(const std::shared_ptr<Buffer>& buffer, int32_t num_values,
@@ -174,6 +223,17 @@ class DictionaryPage : public Page {
   int32_t num_values_;
   Encoding::type encoding_;
   bool is_sorted_;
+};
+
+class SymbolTablePage : public Page {
+ public:
+  SymbolTablePage(const std::shared_ptr<Buffer>& buffer, SymbolTable::type table_type)
+      : Page(buffer, PageType::SYMBOL_TABLE), table_type_(table_type) {}
+
+  SymbolTable::type symbol_table_type() const { return table_type_; }
+
+ private:
+  SymbolTable::type table_type_;
 };
 
 }  // namespace parquet

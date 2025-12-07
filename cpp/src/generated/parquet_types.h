@@ -50,7 +50,7 @@ std::string to_string(const Type::type& val);
 /**
  * DEPRECATED: Common types used by frameworks(e.g. hive, pig) using parquet.
  * ConvertedType is superseded by LogicalType.  This enum should not be extended.
- * 
+ *
  * See LogicalTypes.md for conversion between ConvertedType and LogicalType.
  */
 struct ConvertedType {
@@ -78,12 +78,12 @@ struct ConvertedType {
     ENUM = 4,
     /**
      * A decimal value.
-     * 
+     *
      * This may be used to annotate BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY primitive
      * types. The underlying byte array stores the unscaled value encoded as two's
      * complement using big-endian byte order (the most significant byte is the
      * zeroth element). The value of the decimal is the value * 10^{-scale}.
-     * 
+     *
      * This must be accompanied by a (maximum) precision and a scale in the
      * SchemaElement. The precision specifies the number of digits in the decimal
      * and the scale stores the location of the decimal point. For example 1.23
@@ -93,47 +93,47 @@ struct ConvertedType {
     DECIMAL = 5,
     /**
      * A Date
-     * 
+     *
      * Stored as days since Unix epoch, encoded as the INT32 physical type.
-     * 
+     *
      */
     DATE = 6,
     /**
      * A time
-     * 
+     *
      * The total number of milliseconds since midnight.  The value is stored
      * as an INT32 physical type.
      */
     TIME_MILLIS = 7,
     /**
      * A time.
-     * 
+     *
      * The total number of microseconds since midnight.  The value is stored as
      * an INT64 physical type.
      */
     TIME_MICROS = 8,
     /**
      * A date/time combination
-     * 
+     *
      * Date and time recorded as milliseconds since the Unix epoch.  Recorded as
      * a physical type of INT64.
      */
     TIMESTAMP_MILLIS = 9,
     /**
      * A date/time combination
-     * 
+     *
      * Date and time recorded as microseconds since the Unix epoch.  The value is
      * stored as an INT64 physical type.
      */
     TIMESTAMP_MICROS = 10,
     /**
      * An unsigned integer value.
-     * 
+     *
      * The number describes the maximum number of meaningful data bits in
      * the stored value. 8, 16 and 32 bit values are stored using the
      * INT32 physical type.  64 bit values are stored using the INT64
      * physical type.
-     * 
+     *
      */
     UINT_8 = 11,
     UINT_16 = 12,
@@ -141,12 +141,12 @@ struct ConvertedType {
     UINT_64 = 14,
     /**
      * A signed integer value.
-     * 
+     *
      * The number describes the maximum number of meaningful data bits in
      * the stored value. 8, 16 and 32 bit values are stored using the
      * INT32 physical type.  64 bit values are stored using the INT64
      * physical type.
-     * 
+     *
      */
     INT_8 = 15,
     INT_16 = 16,
@@ -154,19 +154,19 @@ struct ConvertedType {
     INT_64 = 18,
     /**
      * An embedded JSON document
-     * 
+     *
      * A JSON document embedded within a single UTF8 column.
      */
     JSON = 19,
     /**
      * An embedded BSON document
-     * 
+     *
      * A BSON document embedded within a single BYTE_ARRAY column.
      */
     BSON = 20,
     /**
      * An interval of time
-     * 
+     *
      * This type annotates data stored as a FIXED_LEN_BYTE_ARRAY of length 12
      * This data is composed of three separate little endian unsigned
      * integers.  Each stores a component of a duration of time.  The first
@@ -292,7 +292,7 @@ struct Encoding {
      * the streams are concatenated.
      * This itself does not reduce the size of the data but can lead to better compression
      * afterwards.
-     * 
+     *
      * Added in 2.8 for FLOAT and DOUBLE.
      * Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
      */
@@ -308,11 +308,11 @@ std::string to_string(const Encoding::type& val);
 
 /**
  * Supported compression algorithms.
- * 
+ *
  * Codecs added in format version X.Y can be read by readers based on X.Y and later.
  * Codec support may vary between readers based on the format version and
  * libraries available at runtime.
- * 
+ *
  * See Compression.md for a detailed specification of these algorithms.
  */
 struct CompressionCodec {
@@ -339,7 +339,9 @@ struct PageType {
     DATA_PAGE = 0,
     INDEX_PAGE = 1,
     DICTIONARY_PAGE = 2,
-    DATA_PAGE_V2 = 3
+    DATA_PAGE_V2 = 3,
+    SYMBOL_TABLE = 4,
+    DATA_PAGE_V3 = 5
   };
 };
 
@@ -348,6 +350,20 @@ extern const std::map<int, const char*> _PageType_VALUES_TO_NAMES;
 std::ostream& operator<<(std::ostream& out, const PageType::type& val);
 
 std::string to_string(const PageType::type& val);
+
+struct SymbolTableType {
+  enum type {
+    FSST = 0,
+    FSST_V12 = 1,
+    ZSTD_DICTIONARY = 2
+  };
+};
+
+extern const std::map<int, const char*> _SymbolTableType_VALUES_TO_NAMES;
+
+std::ostream& operator<<(std::ostream& out, const SymbolTableType::type& val);
+
+std::string to_string(const SymbolTableType::type& val);
 
 /**
  * Enum to annotate whether lists of min/max elements inside ColumnIndex
@@ -428,6 +444,10 @@ class IndexPageHeader;
 class DictionaryPageHeader;
 
 class DataPageHeaderV2;
+
+class SymbolTablePageHeader;
+
+class DataPageHeaderV3;
 
 class SplitBlockAlgorithm;
 
@@ -517,11 +537,11 @@ class SizeStatistics {
    * schema information multiplied by the number of non-null and null values.
    * The number of null/non-null values can be inferred from the histograms
    * below.
-   * 
+   *
    * For example, if a column chunk is dictionary-encoded with dictionary
    * ["a", "bc", "cde"], and a data page contains the indices [0, 0, 1, 2],
    * then this value for that data page should be 7 (1 + 1 + 2 + 3).
-   * 
+   *
    * This field should only be set for types that use BYTE_ARRAY as their
    * physical type.
    */
@@ -531,18 +551,18 @@ class SizeStatistics {
    * repetition (i.e. size=max repetition_level+1) where each element
    * represents the number of times the repetition level was observed in the
    * data.
-   * 
+   *
    * This field may be omitted if max_repetition_level is 0 without loss
    * of information.
-   * 
+   *
    */
   std::vector<int64_t>  repetition_level_histogram;
   /**
    * Same as repetition_level_histogram except for definition levels.
-   * 
+   *
    * This field may be omitted if max_definition_level is 0 or 1 without
    * loss of information.
-   * 
+   *
    */
   std::vector<int64_t>  definition_level_histogram;
 
@@ -722,14 +742,14 @@ class Statistics {
   virtual ~Statistics() noexcept;
   /**
    * DEPRECATED: min and max value of the column. Use min_value and max_value.
-   * 
+   *
    * Values are encoded using PLAIN encoding, except that variable-length byte
    * arrays do not include a length prefix.
-   * 
+   *
    * These fields encode min and max values determined by signed comparison
    * only. New files should use the correct order for a column's logical type
    * and store the values in the min_value and max_value fields.
-   * 
+   *
    * To support older readers, these may be set when the column order is
    * signed.
    */
@@ -737,7 +757,7 @@ class Statistics {
   std::string min;
   /**
    * Count of null values in the column.
-   * 
+   *
    * Writers SHOULD always write this field even if it is zero (i.e. no null value)
    * or the column is not nullable.
    * Readers MUST distinguish between null_count not being present and null_count == 0.
@@ -750,13 +770,13 @@ class Statistics {
   int64_t distinct_count;
   /**
    * Lower and upper bound values for the column, determined by its ColumnOrder.
-   * 
+   *
    * These may be the actual minimum and maximum values found on a page or column
    * chunk, but can also be (more compact) values that do not exist on a page or
    * column chunk. For example, instead of storing "Blart Versenwald III", a writer
    * may set min_value="B", max_value="C". Such more compact values must still be
    * valid values within the column's logical type.
-   * 
+   *
    * Values are encoded using PLAIN encoding, except that variable-length byte
    * arrays do not include a length prefix.
    */
@@ -1031,7 +1051,7 @@ std::ostream& operator<<(std::ostream& out, const Float16Type& obj);
 
 /**
  * Logical type to annotate a column that is always null.
- * 
+ *
  * Sometimes when discovering the schema of existing data, values are always
  * null and the physical type can't be determined. This annotation signals
  * the case where the physical type was guessed from all null values.
@@ -1069,13 +1089,13 @@ std::ostream& operator<<(std::ostream& out, const NullType& obj);
 
 /**
  * Decimal logical type annotation
- * 
+ *
  * Scale must be zero or a positive integer less than or equal to the precision.
  * Precision must be a non-zero positive integer.
- * 
+ *
  * To maintain forward-compatibility in v1, implementations using this logical
  * type must also set scale and precision on the annotated SchemaElement.
- * 
+ *
  * Allowed for physical types: INT32, INT64, FIXED_LEN_BYTE_ARRAY, and BYTE_ARRAY.
  */
 class DecimalType {
@@ -1261,7 +1281,7 @@ std::ostream& operator<<(std::ostream& out, const TimeUnit& obj);
 
 /**
  * Timestamp logical type annotation
- * 
+ *
  * Allowed for physical types: INT64
  */
 class TimestampType {
@@ -1303,7 +1323,7 @@ std::ostream& operator<<(std::ostream& out, const TimestampType& obj);
 
 /**
  * Time logical type annotation
- * 
+ *
  * Allowed for physical types: INT32 (millis), INT64 (micros, nanos)
  */
 class TimeType {
@@ -1345,9 +1365,9 @@ std::ostream& operator<<(std::ostream& out, const TimeType& obj);
 
 /**
  * Integer logical type annotation
- * 
+ *
  * bitWidth must be 8, 16, 32, or 64.
- * 
+ *
  * Allowed for physical types: INT32, INT64
  */
 class IntType {
@@ -1389,7 +1409,7 @@ std::ostream& operator<<(std::ostream& out, const IntType& obj);
 
 /**
  * Embedded JSON logical type annotation
- * 
+ *
  * Allowed for physical types: BYTE_ARRAY
  */
 class JsonType {
@@ -1425,7 +1445,7 @@ std::ostream& operator<<(std::ostream& out, const JsonType& obj);
 
 /**
  * Embedded BSON logical type annotation
- * 
+ *
  * Allowed for physical types: BYTE_ARRAY
  */
 class BsonType {
@@ -1508,16 +1528,16 @@ typedef struct _GeometryType__isset {
 
 /**
  * Embedded Geometry logical type annotation
- * 
+ *
  * Geospatial features in the Well-Known Binary (WKB) format and edges interpolation
  * is always linear/planar.
- * 
+ *
  * A custom CRS can be set by the crs field. If unset, it defaults to "OGC:CRS84",
  * which means that the geometries must be stored in longitude, latitude based on
  * the WGS84 datum.
- * 
+ *
  * Allowed for physical type: BYTE_ARRAY.
- * 
+ *
  * See Geospatial.md for details.
  */
 class GeometryType {
@@ -1563,19 +1583,19 @@ typedef struct _GeographyType__isset {
 
 /**
  * Embedded Geography logical type annotation
- * 
+ *
  * Geospatial features in the WKB format with an explicit (non-linear/non-planar)
  * edges interpolation algorithm.
- * 
+ *
  * A custom geographic CRS can be set by the crs field, where longitudes are
  * bound by [-180, 180] and latitudes are bound by [-90, 90]. If unset, the CRS
  * defaults to "OGC:CRS84".
- * 
+ *
  * An optional algorithm can be set to correctly interpret edges interpolation
  * of the geometries. If unset, the algorithm defaults to SPHERICAL.
- * 
+ *
  * Allowed for physical type: BYTE_ARRAY.
- * 
+ *
  * See Geospatial.md for details.
  */
 class GeographyType {
@@ -1590,7 +1610,7 @@ class GeographyType {
   virtual ~GeographyType() noexcept;
   std::string crs;
   /**
-   * 
+   *
    * @see EdgeInterpolationAlgorithm
    */
   EdgeInterpolationAlgorithm::type algorithm;
@@ -1643,7 +1663,7 @@ typedef struct _LogicalType__isset {
 
 /**
  * LogicalType annotations to replace ConvertedType.
- * 
+ *
  * To maintain compatibility, implementations using LogicalType for a
  * SchemaElement must also set the corresponding ConvertedType (if any)
  * from the following table.
@@ -1762,7 +1782,7 @@ class SchemaElement {
   virtual ~SchemaElement() noexcept;
   /**
    * Data type for this field. Not set if the current element is a non-leaf node
-   * 
+   *
    * @see Type
    */
   Type::type type;
@@ -1776,7 +1796,7 @@ class SchemaElement {
   /**
    * repetition of the field. The root of the schema does not have a repetition_type.
    * All other nodes must have one
-   * 
+   *
    * @see FieldRepetitionType
    */
   FieldRepetitionType::type repetition_type;
@@ -1794,16 +1814,16 @@ class SchemaElement {
   /**
    * DEPRECATED: When the schema is the result of a conversion from another model.
    * Used to record the original type to help with cross conversion.
-   * 
+   *
    * This is superseded by logicalType.
-   * 
+   *
    * @see ConvertedType
    */
   ConvertedType::type converted_type;
   /**
    * DEPRECATED: Used when this column contains decimal data.
    * See the DECIMAL converted type for more details.
-   * 
+   *
    * This is superseded by using the DecimalType annotation in logicalType.
    */
   int32_t scale;
@@ -1815,7 +1835,7 @@ class SchemaElement {
   int32_t field_id;
   /**
    * The logical type of this SchemaElement
-   * 
+   *
    * LogicalType replaces ConvertedType, but ConvertedType is still required
    * for some logical types to ensure forward-compatibility in format v1.
    */
@@ -1882,28 +1902,28 @@ class DataPageHeader {
   virtual ~DataPageHeader() noexcept;
   /**
    * Number of values, including NULLs, in this data page.
-   * 
+   *
    * If a OffsetIndex is present, a page must begin at a row
    * boundary (repetition_level = 0). Otherwise, pages may begin
    * within a row (repetition_level > 0).
-   * 
+   *
    */
   int32_t num_values;
   /**
    * Encoding used for this data page *
-   * 
+   *
    * @see Encoding
    */
   Encoding::type encoding;
   /**
    * Encoding used for definition levels *
-   * 
+   *
    * @see Encoding
    */
   Encoding::type definition_level_encoding;
   /**
    * Encoding used for repetition levels *
-   * 
+   *
    * @see Encoding
    */
   Encoding::type repetition_level_encoding;
@@ -1983,7 +2003,7 @@ typedef struct _DictionaryPageHeader__isset {
  * The dictionary page must be placed at the first position of the column chunk
  * if it is partly or completely dictionary encoded. At most one dictionary page
  * can be placed in a column chunk.
- * 
+ *
  */
 class DictionaryPageHeader {
  public:
@@ -2001,7 +2021,7 @@ class DictionaryPageHeader {
   int32_t num_values;
   /**
    * Encoding using this dictionary page *
-   * 
+   *
    * @see Encoding
    */
   Encoding::type encoding;
@@ -2047,7 +2067,7 @@ typedef struct _DataPageHeaderV2__isset {
  * New page format allowing reading levels without decompressing the data
  * Repetition and definition levels are uncompressed
  * The remaining section containing the data is compressed if is_compressed is true
- * 
+ *
  */
 class DataPageHeaderV2 {
  public:
@@ -2072,12 +2092,12 @@ class DataPageHeaderV2 {
    * Number of rows in this data page. Every page must begin at a
    * row boundary (repetition_level = 0): rows must **not** be
    * split across page boundaries when using V2 data pages.
-   * 
+   *
    */
   int32_t num_rows;
   /**
    * Encoding used for data in this page *
-   * 
+   *
    * @see Encoding
    */
   Encoding::type encoding;
@@ -2138,6 +2158,173 @@ class DataPageHeaderV2 {
 void swap(DataPageHeaderV2 &a, DataPageHeaderV2 &b);
 
 std::ostream& operator<<(std::ostream& out, const DataPageHeaderV2& obj);
+
+typedef struct _SymbolTablePageHeader__isset {
+  _SymbolTablePageHeader__isset() : symbol_table_type(false) {}
+  bool symbol_table_type :1;
+} _SymbolTablePageHeader__isset;
+
+/**
+ * Header for symbol table pages (e.g., FSST symbol tables)
+ */
+class SymbolTablePageHeader {
+ public:
+
+  SymbolTablePageHeader(const SymbolTablePageHeader&) noexcept;
+  SymbolTablePageHeader(SymbolTablePageHeader&&) noexcept;
+  SymbolTablePageHeader& operator=(const SymbolTablePageHeader&) noexcept;
+  SymbolTablePageHeader& operator=(SymbolTablePageHeader&&) noexcept;
+  SymbolTablePageHeader() noexcept;
+
+  virtual ~SymbolTablePageHeader() noexcept;
+  /**
+   * Type of symbol table
+   *
+   * @see SymbolTableType
+   */
+  SymbolTableType::type symbol_table_type;
+
+  _SymbolTablePageHeader__isset __isset;
+
+  void __set_symbol_table_type(const SymbolTableType::type val);
+
+  bool operator == (const SymbolTablePageHeader & rhs) const;
+  bool operator != (const SymbolTablePageHeader &rhs) const {
+    return !(*this == rhs);
+  }
+
+  bool operator < (const SymbolTablePageHeader & ) const;
+
+  template <class Protocol_>
+  uint32_t read(Protocol_* iprot);
+  template <class Protocol_>
+  uint32_t write(Protocol_* oprot) const;
+
+  virtual void printTo(std::ostream& out) const;
+};
+
+void swap(SymbolTablePageHeader &a, SymbolTablePageHeader &b);
+
+std::ostream& operator<<(std::ostream& out, const SymbolTablePageHeader& obj);
+
+typedef struct _DataPageHeaderV3__isset {
+  _DataPageHeaderV3__isset() : statistics(false), encoding_metadata(false), repetition_level_encodings(false), definition_level_encodings(false) {}
+  bool statistics :1;
+  bool encoding_metadata :1;
+  bool repetition_level_encodings :1;
+  bool definition_level_encodings :1;
+} _DataPageHeaderV3__isset;
+
+/**
+ * Data page header V3 with flexible encoding pipelines
+ */
+class DataPageHeaderV3 {
+ public:
+
+  DataPageHeaderV3(const DataPageHeaderV3&);
+  DataPageHeaderV3(DataPageHeaderV3&&) noexcept;
+  DataPageHeaderV3& operator=(const DataPageHeaderV3&);
+  DataPageHeaderV3& operator=(DataPageHeaderV3&&) noexcept;
+  DataPageHeaderV3() noexcept;
+
+  virtual ~DataPageHeaderV3() noexcept;
+  /**
+   * Number of values, including NULLs, in this data page.
+   */
+  int32_t num_values;
+  /**
+   * Number of NULL values in this data page.
+   */
+  int32_t num_nulls;
+  /**
+   * Number of rows in this data page.
+   */
+  int32_t num_rows;
+  /**
+   * Encoding used for values in this page (deprecated, use values_encoding)
+   *
+   * @see Encoding
+   */
+  Encoding::type encoding;
+  /**
+   * Encoding used for values in this page
+   *
+   * @see Encoding
+   */
+  Encoding::type values_encoding;
+  /**
+   * Length of the definition levels
+   */
+  int32_t definition_levels_byte_length;
+  /**
+   * Length of the repetition levels
+   */
+  int32_t repetition_levels_byte_length;
+  /**
+   * Whether the values are compressed
+   */
+  bool is_compressed;
+  /**
+   * Optional statistics for the data in this page
+   */
+  Statistics statistics;
+  /**
+   * Optional encoding metadata (e.g., composite encoding chain info)
+   */
+  std::string encoding_metadata;
+  /**
+   * Optional list of encodings for repetition levels
+   */
+  std::vector<Encoding::type> repetition_level_encodings;
+  /**
+   * Optional list of encodings for definition levels
+   */
+  std::vector<Encoding::type> definition_level_encodings;
+
+  _DataPageHeaderV3__isset __isset;
+
+  void __set_num_values(const int32_t val);
+
+  void __set_num_nulls(const int32_t val);
+
+  void __set_num_rows(const int32_t val);
+
+  void __set_encoding(const Encoding::type val);
+
+  void __set_values_encoding(const Encoding::type val);
+
+  void __set_definition_levels_byte_length(const int32_t val);
+
+  void __set_repetition_levels_byte_length(const int32_t val);
+
+  void __set_is_compressed(const bool val);
+
+  void __set_statistics(const Statistics& val);
+
+  void __set_encoding_metadata(const std::string& val);
+
+  void __set_repetition_level_encodings(const std::vector<Encoding::type>& val);
+
+  void __set_definition_level_encodings(const std::vector<Encoding::type>& val);
+
+  bool operator == (const DataPageHeaderV3 & rhs) const;
+  bool operator != (const DataPageHeaderV3 &rhs) const {
+    return !(*this == rhs);
+  }
+
+  bool operator < (const DataPageHeaderV3 & ) const;
+
+  template <class Protocol_>
+  uint32_t read(Protocol_* iprot);
+  template <class Protocol_>
+  uint32_t write(Protocol_* oprot) const;
+
+  virtual void printTo(std::ostream& out) const;
+};
+
+void swap(DataPageHeaderV3 &a, DataPageHeaderV3 &b);
+
+std::ostream& operator<<(std::ostream& out, const DataPageHeaderV3& obj);
 
 
 /**
@@ -2223,7 +2410,7 @@ std::ostream& operator<<(std::ostream& out, const BloomFilterAlgorithm& obj);
 /**
  * Hash strategy type annotation. xxHash is an extremely fast non-cryptographic hash
  * algorithm. It uses 64 bits version of xxHash.
- * 
+ *
  */
 class XxHash {
  public:
@@ -2263,7 +2450,7 @@ typedef struct _BloomFilterHash__isset {
 /**
  * The hash function used in Bloom filter. This function takes the hash of a column value
  * using plain encoding.
- * 
+ *
  */
 class BloomFilterHash {
  public:
@@ -2306,7 +2493,7 @@ std::ostream& operator<<(std::ostream& out, const BloomFilterHash& obj);
 
 /**
  * The compression used in the Bloom filter.
- * 
+ *
  */
 class Uncompressed {
  public:
@@ -2382,7 +2569,7 @@ std::ostream& operator<<(std::ostream& out, const BloomFilterCompression& obj);
 /**
  * Bloom filter header is stored at beginning of Bloom filter data of each column
  * and followed by its bitset.
- * 
+ *
  */
 class BloomFilterHeader {
  public:
@@ -2439,12 +2626,14 @@ void swap(BloomFilterHeader &a, BloomFilterHeader &b);
 std::ostream& operator<<(std::ostream& out, const BloomFilterHeader& obj);
 
 typedef struct _PageHeader__isset {
-  _PageHeader__isset() : crc(false), data_page_header(false), index_page_header(false), dictionary_page_header(false), data_page_header_v2(false) {}
+  _PageHeader__isset() : crc(false), data_page_header(false), index_page_header(false), dictionary_page_header(false), data_page_header_v2(false), symbol_table_page_header(false), data_page_header_v3(false) {}
   bool crc :1;
   bool data_page_header :1;
   bool index_page_header :1;
   bool dictionary_page_header :1;
   bool data_page_header_v2 :1;
+  bool symbol_table_page_header :1;
+  bool data_page_header_v3 :1;
 } _PageHeader__isset;
 
 class PageHeader {
@@ -2459,7 +2648,7 @@ class PageHeader {
   virtual ~PageHeader() noexcept;
   /**
    * the type of the page: indicates which of the *_header fields is set *
-   * 
+   *
    * @see PageType
    */
   PageType::type type;
@@ -2473,7 +2662,7 @@ class PageHeader {
   int32_t compressed_page_size;
   /**
    * The 32-bit CRC checksum for the page, to be be calculated as follows:
-   * 
+   *
    * - The standard CRC32 algorithm is used (with polynomial 0x04C11DB7,
    *   the same as in e.g. GZip).
    * - All page types can have a CRC (v1 and v2 data pages, dictionary pages,
@@ -2485,7 +2674,7 @@ class PageHeader {
    *   encrypted).
    * - The CRC computation therefore takes place after any compression
    *   and encryption steps, if any.
-   * 
+   *
    * If enabled, this allows for disabling checksumming in HDFS if only a few
    * pages need to be read.
    */
@@ -2494,6 +2683,8 @@ class PageHeader {
   IndexPageHeader index_page_header;
   DictionaryPageHeader dictionary_page_header;
   DataPageHeaderV2 data_page_header_v2;
+  SymbolTablePageHeader symbol_table_page_header;
+  DataPageHeaderV3 data_page_header_v3;
 
   _PageHeader__isset __isset;
 
@@ -2512,6 +2703,10 @@ class PageHeader {
   void __set_dictionary_page_header(const DictionaryPageHeader& val);
 
   void __set_data_page_header_v2(const DataPageHeaderV2& val);
+
+  void __set_symbol_table_page_header(const SymbolTablePageHeader& val);
+
+  void __set_data_page_header_v3(const DataPageHeaderV3& val);
 
   bool operator == (const PageHeader & rhs) const;
   bool operator != (const PageHeader &rhs) const {
@@ -2647,13 +2842,13 @@ class PageEncodingStats {
   virtual ~PageEncodingStats() noexcept;
   /**
    * the page type (data/dic/...) *
-   * 
+   *
    * @see PageType
    */
   PageType::type page_type;
   /**
    * encoding of the page *
-   * 
+   *
    * @see Encoding
    */
   Encoding::type encoding;
@@ -2688,7 +2883,7 @@ void swap(PageEncodingStats &a, PageEncodingStats &b);
 std::ostream& operator<<(std::ostream& out, const PageEncodingStats& obj);
 
 typedef struct _ColumnMetaData__isset {
-  _ColumnMetaData__isset() : key_value_metadata(false), index_page_offset(false), dictionary_page_offset(false), statistics(false), encoding_stats(false), bloom_filter_offset(false), bloom_filter_length(false), size_statistics(false), geospatial_statistics(false) {}
+  _ColumnMetaData__isset() : key_value_metadata(false), index_page_offset(false), dictionary_page_offset(false), statistics(false), encoding_stats(false), bloom_filter_offset(false), bloom_filter_length(false), size_statistics(false), geospatial_statistics(false), symbol_table_page_offsets(false) {}
   bool key_value_metadata :1;
   bool index_page_offset :1;
   bool dictionary_page_offset :1;
@@ -2698,6 +2893,7 @@ typedef struct _ColumnMetaData__isset {
   bool bloom_filter_length :1;
   bool size_statistics :1;
   bool geospatial_statistics :1;
+  bool symbol_table_page_offsets :1;
 } _ColumnMetaData__isset;
 
 /**
@@ -2715,7 +2911,7 @@ class ColumnMetaData {
   virtual ~ColumnMetaData() noexcept;
   /**
    * Type of this column *
-   * 
+   *
    * @see Type
    */
   Type::type type;
@@ -2730,7 +2926,7 @@ class ColumnMetaData {
   std::vector<std::string>  path_in_schema;
   /**
    * Compression codec *
-   * 
+   *
    * @see CompressionCodec
    */
   CompressionCodec::type codec;
@@ -2796,6 +2992,10 @@ class ColumnMetaData {
    * Optional statistics specific for Geometry and Geography logical types
    */
   GeospatialStatistics geospatial_statistics;
+  /**
+   * Offsets in the file to shared symbol tables
+   */
+  std::vector<int64_t> symbol_table_page_offsets;
 
   _ColumnMetaData__isset __isset;
 
@@ -2832,6 +3032,8 @@ class ColumnMetaData {
   void __set_size_statistics(const SizeStatistics& val);
 
   void __set_geospatial_statistics(const GeospatialStatistics& val);
+
+  void __set_symbol_table_page_offsets(const std::vector<int64_t>& val);
 
   bool operator == (const ColumnMetaData & rhs) const;
   bool operator != (const ColumnMetaData &rhs) const {
@@ -3001,12 +3203,12 @@ class ColumnChunk {
   /**
    * File where column data is stored.  If not set, assumed to be same file as
    * metadata.  This path is relative to the current file.
-   * 
+   *
    */
   std::string file_path;
   /**
    * Deprecated: Byte offset in file_path to the ColumnMetaData
-   * 
+   *
    * Past use of this field has been inconsistent, with some implementations
    * using it to point to the ColumnMetaData and some using it to point to
    * the first page in the column chunk. In many cases, the ColumnMetaData at this
@@ -3020,7 +3222,7 @@ class ColumnChunk {
    * location pointed to by file_path/file_offset.
    * Note: while marked as optional, this field is in fact required by most major
    * Parquet implementations. As such, writers MUST populate this field.
-   * 
+   *
    */
   ColumnMetaData meta_data;
   /**
@@ -3108,7 +3310,7 @@ class RowGroup {
   /**
    * Metadata for each column chunk in this row group.
    * This list must have the same order as the SchemaElement list in FileMetaData.
-   * 
+   *
    */
   std::vector<ColumnChunk>  columns;
   /**
@@ -3217,11 +3419,11 @@ typedef struct _ColumnOrder__isset {
  * Union to specify the order used for the min_value and max_value fields for a
  * column. This union takes the role of an enhanced enum that allows rich
  * elements (which will be needed for a collation-based ordering in the future).
- * 
+ *
  * Possible values are:
  * * TypeDefinedOrder - the column uses the order defined by its logical or
  *                      physical type (if there is no logical type).
- * 
+ *
  * If the reader does not support the value of this union, min and max stats
  * for this column should be ignored.
  */
@@ -3261,7 +3463,7 @@ class ColumnOrder {
    *   VARIANT - undefined
    *   GEOMETRY - undefined
    *   GEOGRAPHY - undefined
-   * 
+   *
    * In the absence of logical types, the sort order is determined by the physical type:
    *   BOOLEAN - false, true
    *   INT32 - signed comparison
@@ -3271,7 +3473,7 @@ class ColumnOrder {
    *   DOUBLE - signed comparison of the represented value (*)
    *   BYTE_ARRAY - unsigned byte-wise comparison
    *   FIXED_LEN_BYTE_ARRAY - unsigned byte-wise comparison
-   * 
+   *
    * (*) Because the sorting order is not specified properly for floating
    *     point values (relations vs. total ordering) the following
    *     compatibility rules should be applied when reading statistics:
@@ -3280,7 +3482,7 @@ class ColumnOrder {
    *     - If the min is +0, the row group may contain -0 values as well.
    *     - If the max is -0, the row group may contain +0 values as well.
    *     - When looking for NaN values, min and max should be ignored.
-   * 
+   *
    *     When writing statistics the following rules should be followed:
    *     - NaNs should not be written to min or max statistics fields.
    *     - If the computed max value is zero (whether negative or positive),
@@ -3372,9 +3574,9 @@ typedef struct _OffsetIndex__isset {
 
 /**
  * Optional offsets for each data page in a ColumnChunk.
- * 
+ *
  * Forms part of the page index, along with ColumnIndex.
- * 
+ *
  * OffsetIndex may be present even if ColumnIndex is not.
  */
 class OffsetIndex {
@@ -3394,7 +3596,7 @@ class OffsetIndex {
   std::vector<PageLocation>  page_locations;
   /**
    * Unencoded/uncompressed size for BYTE_ARRAY types.
-   * 
+   *
    * See documention for unencoded_byte_array_data_bytes in SizeStatistics for
    * more details on this field.
    */
@@ -3434,11 +3636,11 @@ typedef struct _ColumnIndex__isset {
 
 /**
  * Optional statistics for each data page in a ColumnChunk.
- * 
+ *
  * Forms part the page index, along with OffsetIndex.
- * 
+ *
  * If this structure is present, OffsetIndex must also be present.
- * 
+ *
  * For each field in this structure, <field>[i] refers to the page at
  * OffsetIndex.page_locations[i]
  */
@@ -3477,13 +3679,13 @@ class ColumnIndex {
    * which direction. This allows readers to perform binary searches in both
    * lists. Readers cannot assume that max_values[i] <= min_values[i+1], even
    * if the lists are ordered.
-   * 
+   *
    * @see BoundaryOrder
    */
   BoundaryOrder::type boundary_order;
   /**
    * A list containing the number of null values for each page
-   * 
+   *
    * Writers SHOULD always write this field even if no null values
    * are present or the column is not nullable.
    * Readers MUST distinguish between null_counts not being present
@@ -3496,19 +3698,19 @@ class ColumnIndex {
    * Contains repetition level histograms for each page
    * concatenated together.  The repetition_level_histogram field on
    * SizeStatistics contains more details.
-   * 
+   *
    * When present the length should always be (number of pages *
    * (max_repetition_level + 1)) elements.
-   * 
+   *
    * Element 0 is the first element of the histogram for the first page.
    * Element (max_repetition_level + 1) is the first element of the histogram
    * for the second page.
-   * 
+   *
    */
   std::vector<int64_t>  repetition_level_histograms;
   /**
    * Same as repetition_level_histograms except for definitions levels.
-   * 
+   *
    */
   std::vector<int64_t>  definition_level_histograms;
 
@@ -3758,7 +3960,7 @@ class FileMetaData {
    * String for application that wrote this file.  This should be in the format
    * <Application> version <App Version> (build <App Build Hash>).
    * e.g. impala version 1.0 (build 6cf94d29b2b7115df4de2c06e2ab4326d721eb55)
-   * 
+   *
    */
   std::string created_by;
   /**
@@ -3768,12 +3970,12 @@ class FileMetaData {
    * matching the columns in the schema. The indexes are not necessary the same
    * though, because only leaf nodes of the schema are represented in the list
    * of sort orders.
-   * 
+   *
    * Without column_orders, the meaning of the min_value and max_value fields
    * in the Statistics object and the ColumnIndex object is undefined. To ensure
    * well-defined behaviour, if these fields are written to a Parquet file,
    * column_orders must be written as well.
-   * 
+   *
    * The obsolete min and max fields in the Statistics object are always sorted
    * by signed comparison regardless of column_orders.
    */

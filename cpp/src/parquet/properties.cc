@@ -108,6 +108,10 @@ void WriterProperties::Builder::CopyColumnSpecificProperties(
     if (col_props.encoding() != default_column_properties_.encoding()) {
       this->encoding(col_path, col_props.encoding());
     }
+
+    if (col_props.composite_encoding().has_value()) {
+      this->composite_encoding(col_path, *col_props.composite_encoding());
+    }
   }
 }
 

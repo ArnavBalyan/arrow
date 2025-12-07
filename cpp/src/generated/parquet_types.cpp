@@ -78,12 +78,12 @@ int _kConvertedTypeValues[] = {
   ConvertedType::ENUM,
   /**
    * A decimal value.
-   * 
+   *
    * This may be used to annotate BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY primitive
    * types. The underlying byte array stores the unscaled value encoded as two's
    * complement using big-endian byte order (the most significant byte is the
    * zeroth element). The value of the decimal is the value * 10^{-scale}.
-   * 
+   *
    * This must be accompanied by a (maximum) precision and a scale in the
    * SchemaElement. The precision specifies the number of digits in the decimal
    * and the scale stores the location of the decimal point. For example 1.23
@@ -93,47 +93,47 @@ int _kConvertedTypeValues[] = {
   ConvertedType::DECIMAL,
   /**
    * A Date
-   * 
+   *
    * Stored as days since Unix epoch, encoded as the INT32 physical type.
-   * 
+   *
    */
   ConvertedType::DATE,
   /**
    * A time
-   * 
+   *
    * The total number of milliseconds since midnight.  The value is stored
    * as an INT32 physical type.
    */
   ConvertedType::TIME_MILLIS,
   /**
    * A time.
-   * 
+   *
    * The total number of microseconds since midnight.  The value is stored as
    * an INT64 physical type.
    */
   ConvertedType::TIME_MICROS,
   /**
    * A date/time combination
-   * 
+   *
    * Date and time recorded as milliseconds since the Unix epoch.  Recorded as
    * a physical type of INT64.
    */
   ConvertedType::TIMESTAMP_MILLIS,
   /**
    * A date/time combination
-   * 
+   *
    * Date and time recorded as microseconds since the Unix epoch.  The value is
    * stored as an INT64 physical type.
    */
   ConvertedType::TIMESTAMP_MICROS,
   /**
    * An unsigned integer value.
-   * 
+   *
    * The number describes the maximum number of meaningful data bits in
    * the stored value. 8, 16 and 32 bit values are stored using the
    * INT32 physical type.  64 bit values are stored using the INT64
    * physical type.
-   * 
+   *
    */
   ConvertedType::UINT_8,
   ConvertedType::UINT_16,
@@ -141,12 +141,12 @@ int _kConvertedTypeValues[] = {
   ConvertedType::UINT_64,
   /**
    * A signed integer value.
-   * 
+   *
    * The number describes the maximum number of meaningful data bits in
    * the stored value. 8, 16 and 32 bit values are stored using the
    * INT32 physical type.  64 bit values are stored using the INT64
    * physical type.
-   * 
+   *
    */
   ConvertedType::INT_8,
   ConvertedType::INT_16,
@@ -154,19 +154,19 @@ int _kConvertedTypeValues[] = {
   ConvertedType::INT_64,
   /**
    * An embedded JSON document
-   * 
+   *
    * A JSON document embedded within a single UTF8 column.
    */
   ConvertedType::JSON,
   /**
    * An embedded BSON document
-   * 
+   *
    * A BSON document embedded within a single BYTE_ARRAY column.
    */
   ConvertedType::BSON,
   /**
    * An interval of time
-   * 
+   *
    * This type annotates data stored as a FIXED_LEN_BYTE_ARRAY of length 12
    * This data is composed of three separate little endian unsigned
    * integers.  Each stores a component of a duration of time.  The first
@@ -202,12 +202,12 @@ const char* _kConvertedTypeNames[] = {
   "ENUM",
   /**
    * A decimal value.
-   * 
+   *
    * This may be used to annotate BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY primitive
    * types. The underlying byte array stores the unscaled value encoded as two's
    * complement using big-endian byte order (the most significant byte is the
    * zeroth element). The value of the decimal is the value * 10^{-scale}.
-   * 
+   *
    * This must be accompanied by a (maximum) precision and a scale in the
    * SchemaElement. The precision specifies the number of digits in the decimal
    * and the scale stores the location of the decimal point. For example 1.23
@@ -217,47 +217,47 @@ const char* _kConvertedTypeNames[] = {
   "DECIMAL",
   /**
    * A Date
-   * 
+   *
    * Stored as days since Unix epoch, encoded as the INT32 physical type.
-   * 
+   *
    */
   "DATE",
   /**
    * A time
-   * 
+   *
    * The total number of milliseconds since midnight.  The value is stored
    * as an INT32 physical type.
    */
   "TIME_MILLIS",
   /**
    * A time.
-   * 
+   *
    * The total number of microseconds since midnight.  The value is stored as
    * an INT64 physical type.
    */
   "TIME_MICROS",
   /**
    * A date/time combination
-   * 
+   *
    * Date and time recorded as milliseconds since the Unix epoch.  Recorded as
    * a physical type of INT64.
    */
   "TIMESTAMP_MILLIS",
   /**
    * A date/time combination
-   * 
+   *
    * Date and time recorded as microseconds since the Unix epoch.  The value is
    * stored as an INT64 physical type.
    */
   "TIMESTAMP_MICROS",
   /**
    * An unsigned integer value.
-   * 
+   *
    * The number describes the maximum number of meaningful data bits in
    * the stored value. 8, 16 and 32 bit values are stored using the
    * INT32 physical type.  64 bit values are stored using the INT64
    * physical type.
-   * 
+   *
    */
   "UINT_8",
   "UINT_16",
@@ -265,12 +265,12 @@ const char* _kConvertedTypeNames[] = {
   "UINT_64",
   /**
    * A signed integer value.
-   * 
+   *
    * The number describes the maximum number of meaningful data bits in
    * the stored value. 8, 16 and 32 bit values are stored using the
    * INT32 physical type.  64 bit values are stored using the INT64
    * physical type.
-   * 
+   *
    */
   "INT_8",
   "INT_16",
@@ -278,19 +278,19 @@ const char* _kConvertedTypeNames[] = {
   "INT_64",
   /**
    * An embedded JSON document
-   * 
+   *
    * A JSON document embedded within a single UTF8 column.
    */
   "JSON",
   /**
    * An embedded BSON document
-   * 
+   *
    * A BSON document embedded within a single BYTE_ARRAY column.
    */
   "BSON",
   /**
    * An interval of time
-   * 
+   *
    * This type annotates data stored as a FIXED_LEN_BYTE_ARRAY of length 12
    * This data is composed of three separate little endian unsigned
    * integers.  Each stores a component of a duration of time.  The first
@@ -462,7 +462,7 @@ int _kEncodingValues[] = {
    * the streams are concatenated.
    * This itself does not reduce the size of the data but can lead to better compression
    * afterwards.
-   * 
+   *
    * Added in 2.8 for FLOAT and DOUBLE.
    * Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
    */
@@ -523,7 +523,7 @@ const char* _kEncodingNames[] = {
    * the streams are concatenated.
    * This itself does not reduce the size of the data but can lead to better compression
    * afterwards.
-   * 
+   *
    * Added in 2.8 for FLOAT and DOUBLE.
    * Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
    */
@@ -595,15 +595,19 @@ int _kPageTypeValues[] = {
   PageType::DATA_PAGE,
   PageType::INDEX_PAGE,
   PageType::DICTIONARY_PAGE,
-  PageType::DATA_PAGE_V2
+  PageType::DATA_PAGE_V2,
+  PageType::SYMBOL_TABLE,
+  PageType::DATA_PAGE_V3
 };
 const char* _kPageTypeNames[] = {
   "DATA_PAGE",
   "INDEX_PAGE",
   "DICTIONARY_PAGE",
-  "DATA_PAGE_V2"
+  "DATA_PAGE_V2",
+  "SYMBOL_TABLE",
+  "DATA_PAGE_V3"
 };
-const std::map<int, const char*> _PageType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(4, _kPageTypeValues, _kPageTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
+const std::map<int, const char*> _PageType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(6, _kPageTypeValues, _kPageTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
 
 std::ostream& operator<<(std::ostream& out, const PageType::type& val) {
   std::map<int, const char*>::const_iterator it = _PageType_VALUES_TO_NAMES.find(val);
@@ -618,6 +622,37 @@ std::ostream& operator<<(std::ostream& out, const PageType::type& val) {
 std::string to_string(const PageType::type& val) {
   std::map<int, const char*>::const_iterator it = _PageType_VALUES_TO_NAMES.find(val);
   if (it != _PageType_VALUES_TO_NAMES.end()) {
+    return std::string(it->second);
+  } else {
+    return std::to_string(static_cast<int>(val));
+  }
+}
+
+int _kSymbolTableTypeValues[] = {
+  SymbolTableType::FSST,
+  SymbolTableType::FSST_V12,
+  SymbolTableType::ZSTD_DICTIONARY
+};
+const char* _kSymbolTableTypeNames[] = {
+  "FSST",
+  "FSST_V12",
+  "ZSTD_DICTIONARY"
+};
+const std::map<int, const char*> _SymbolTableType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(3, _kSymbolTableTypeValues, _kSymbolTableTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
+
+std::ostream& operator<<(std::ostream& out, const SymbolTableType::type& val) {
+  auto it = _SymbolTableType_VALUES_TO_NAMES.find(val);
+  if (it != _SymbolTableType_VALUES_TO_NAMES.end()) {
+    out << it->second;
+  } else {
+    out << static_cast<int>(val);
+  }
+  return out;
+}
+
+std::string to_string(const SymbolTableType::type& val) {
+  auto it = _SymbolTableType_VALUES_TO_NAMES.find(val);
+  if (it != _SymbolTableType_VALUES_TO_NAMES.end()) {
     return std::string(it->second);
   } else {
     return std::to_string(static_cast<int>(val));
@@ -3143,6 +3178,272 @@ void DataPageHeaderV2::printTo(std::ostream& out) const {
 }
 
 
+SymbolTablePageHeader::~SymbolTablePageHeader() noexcept {
+}
+
+SymbolTablePageHeader::SymbolTablePageHeader() noexcept
+   : symbol_table_type(static_cast<SymbolTableType::type>(0)) {
+}
+
+void SymbolTablePageHeader::__set_symbol_table_type(const SymbolTableType::type val) {
+  this->symbol_table_type = val;
+  __isset.symbol_table_type = true;
+}
+std::ostream& operator<<(std::ostream& out, const SymbolTablePageHeader& obj)
+{
+  obj.printTo(out);
+  return out;
+}
+
+
+void swap(SymbolTablePageHeader &a, SymbolTablePageHeader &b) {
+  using ::std::swap;
+  swap(a.symbol_table_type, b.symbol_table_type);
+  swap(a.__isset, b.__isset);
+}
+
+bool SymbolTablePageHeader::operator==(const SymbolTablePageHeader & rhs) const
+{
+  if (__isset.symbol_table_type != rhs.__isset.symbol_table_type)
+    return false;
+  else if (__isset.symbol_table_type && !(symbol_table_type == rhs.symbol_table_type))
+    return false;
+  return true;
+}
+
+SymbolTablePageHeader::SymbolTablePageHeader(const SymbolTablePageHeader& other) noexcept {
+  symbol_table_type = other.symbol_table_type;
+  __isset = other.__isset;
+}
+SymbolTablePageHeader::SymbolTablePageHeader(SymbolTablePageHeader&& other) noexcept {
+  symbol_table_type = other.symbol_table_type;
+  __isset = other.__isset;
+}
+SymbolTablePageHeader& SymbolTablePageHeader::operator=(const SymbolTablePageHeader& other) noexcept {
+  symbol_table_type = other.symbol_table_type;
+  __isset = other.__isset;
+  return *this;
+}
+SymbolTablePageHeader& SymbolTablePageHeader::operator=(SymbolTablePageHeader&& other) noexcept {
+  symbol_table_type = other.symbol_table_type;
+  __isset = other.__isset;
+  return *this;
+}
+void SymbolTablePageHeader::printTo(std::ostream& out) const {
+  using ::apache::thrift::to_string;
+  out << "SymbolTablePageHeader(";
+  out << "symbol_table_type="; (__isset.symbol_table_type ? (out << to_string(symbol_table_type)) : (out << "<null>"));
+  out << ")";
+}
+
+
+DataPageHeaderV3::~DataPageHeaderV3() noexcept {
+}
+
+DataPageHeaderV3::DataPageHeaderV3() noexcept
+   : num_values(0),
+     num_nulls(0),
+     num_rows(0),
+     encoding(static_cast<Encoding::type>(0)),
+     values_encoding(static_cast<Encoding::type>(0)),
+     definition_levels_byte_length(0),
+     repetition_levels_byte_length(0),
+     is_compressed(true) {
+}
+
+void DataPageHeaderV3::__set_num_values(const int32_t val) {
+  this->num_values = val;
+}
+
+void DataPageHeaderV3::__set_num_nulls(const int32_t val) {
+  this->num_nulls = val;
+}
+
+void DataPageHeaderV3::__set_num_rows(const int32_t val) {
+  this->num_rows = val;
+}
+
+void DataPageHeaderV3::__set_encoding(const Encoding::type val) {
+  this->encoding = val;
+}
+
+void DataPageHeaderV3::__set_definition_levels_byte_length(const int32_t val) {
+  this->definition_levels_byte_length = val;
+}
+
+void DataPageHeaderV3::__set_repetition_levels_byte_length(const int32_t val) {
+  this->repetition_levels_byte_length = val;
+}
+
+void DataPageHeaderV3::__set_is_compressed(const bool val) {
+  this->is_compressed = val;
+}
+
+void DataPageHeaderV3::__set_statistics(const Statistics& val) {
+  this->statistics = val;
+  __isset.statistics = true;
+}
+
+void DataPageHeaderV3::__set_encoding_metadata(const std::string& val) {
+  this->encoding_metadata = val;
+  __isset.encoding_metadata = true;
+}
+
+void DataPageHeaderV3::__set_values_encoding(const Encoding::type val) {
+  this->values_encoding = val;
+}
+
+void DataPageHeaderV3::__set_repetition_level_encodings(const std::vector<Encoding::type>& val) {
+  this->repetition_level_encodings = val;
+  __isset.repetition_level_encodings = true;
+}
+
+void DataPageHeaderV3::__set_definition_level_encodings(const std::vector<Encoding::type>& val) {
+  this->definition_level_encodings = val;
+  __isset.definition_level_encodings = true;
+}
+std::ostream& operator<<(std::ostream& out, const DataPageHeaderV3& obj)
+{
+  obj.printTo(out);
+  return out;
+}
+
+
+void swap(DataPageHeaderV3 &a, DataPageHeaderV3 &b) {
+  using ::std::swap;
+  swap(a.num_values, b.num_values);
+  swap(a.num_nulls, b.num_nulls);
+  swap(a.num_rows, b.num_rows);
+  swap(a.encoding, b.encoding);
+  swap(a.values_encoding, b.values_encoding);
+  swap(a.definition_levels_byte_length, b.definition_levels_byte_length);
+  swap(a.repetition_levels_byte_length, b.repetition_levels_byte_length);
+  swap(a.is_compressed, b.is_compressed);
+  swap(a.statistics, b.statistics);
+  swap(a.encoding_metadata, b.encoding_metadata);
+  swap(a.repetition_level_encodings, b.repetition_level_encodings);
+  swap(a.definition_level_encodings, b.definition_level_encodings);
+  swap(a.__isset, b.__isset);
+}
+
+bool DataPageHeaderV3::operator==(const DataPageHeaderV3 & rhs) const
+{
+  if (!(num_values == rhs.num_values))
+    return false;
+  if (!(num_nulls == rhs.num_nulls))
+    return false;
+  if (!(num_rows == rhs.num_rows))
+    return false;
+  if (!(encoding == rhs.encoding))
+    return false;
+  if (!(values_encoding == rhs.values_encoding))
+    return false;
+  if (!(definition_levels_byte_length == rhs.definition_levels_byte_length))
+    return false;
+  if (!(repetition_levels_byte_length == rhs.repetition_levels_byte_length))
+    return false;
+  if (!(is_compressed == rhs.is_compressed))
+    return false;
+  if (__isset.statistics != rhs.__isset.statistics)
+    return false;
+  else if (__isset.statistics && !(statistics == rhs.statistics))
+    return false;
+  if (__isset.encoding_metadata != rhs.__isset.encoding_metadata)
+    return false;
+  else if (__isset.encoding_metadata && !(encoding_metadata == rhs.encoding_metadata))
+    return false;
+  if (__isset.repetition_level_encodings != rhs.__isset.repetition_level_encodings)
+    return false;
+  else if (__isset.repetition_level_encodings && !(repetition_level_encodings == rhs.repetition_level_encodings))
+    return false;
+  if (__isset.definition_level_encodings != rhs.__isset.definition_level_encodings)
+    return false;
+  else if (__isset.definition_level_encodings && !(definition_level_encodings == rhs.definition_level_encodings))
+    return false;
+  return true;
+}
+
+DataPageHeaderV3::DataPageHeaderV3(const DataPageHeaderV3& other) {
+  num_values = other.num_values;
+  num_nulls = other.num_nulls;
+  num_rows = other.num_rows;
+  encoding = other.encoding;
+  values_encoding = other.values_encoding;
+  definition_levels_byte_length = other.definition_levels_byte_length;
+  repetition_levels_byte_length = other.repetition_levels_byte_length;
+  is_compressed = other.is_compressed;
+  statistics = other.statistics;
+  encoding_metadata = other.encoding_metadata;
+  repetition_level_encodings = other.repetition_level_encodings;
+  definition_level_encodings = other.definition_level_encodings;
+  __isset = other.__isset;
+}
+DataPageHeaderV3::DataPageHeaderV3(DataPageHeaderV3&& other) noexcept {
+  num_values = other.num_values;
+  num_nulls = other.num_nulls;
+  num_rows = other.num_rows;
+  encoding = other.encoding;
+  values_encoding = other.values_encoding;
+  definition_levels_byte_length = other.definition_levels_byte_length;
+  repetition_levels_byte_length = other.repetition_levels_byte_length;
+  is_compressed = other.is_compressed;
+  statistics = std::move(other.statistics);
+  encoding_metadata = std::move(other.encoding_metadata);
+  repetition_level_encodings = std::move(other.repetition_level_encodings);
+  definition_level_encodings = std::move(other.definition_level_encodings);
+  __isset = other.__isset;
+}
+DataPageHeaderV3& DataPageHeaderV3::operator=(const DataPageHeaderV3& other) {
+  num_values = other.num_values;
+  num_nulls = other.num_nulls;
+  num_rows = other.num_rows;
+  encoding = other.encoding;
+  values_encoding = other.values_encoding;
+  definition_levels_byte_length = other.definition_levels_byte_length;
+  repetition_levels_byte_length = other.repetition_levels_byte_length;
+  is_compressed = other.is_compressed;
+  statistics = other.statistics;
+  encoding_metadata = other.encoding_metadata;
+  repetition_level_encodings = other.repetition_level_encodings;
+  definition_level_encodings = other.definition_level_encodings;
+  __isset = other.__isset;
+  return *this;
+}
+DataPageHeaderV3& DataPageHeaderV3::operator=(DataPageHeaderV3&& other) noexcept {
+  num_values = other.num_values;
+  num_nulls = other.num_nulls;
+  num_rows = other.num_rows;
+  encoding = other.encoding;
+  values_encoding = other.values_encoding;
+  definition_levels_byte_length = other.definition_levels_byte_length;
+  repetition_levels_byte_length = other.repetition_levels_byte_length;
+  is_compressed = other.is_compressed;
+  statistics = std::move(other.statistics);
+  encoding_metadata = std::move(other.encoding_metadata);
+  repetition_level_encodings = std::move(other.repetition_level_encodings);
+  definition_level_encodings = std::move(other.definition_level_encodings);
+  __isset = other.__isset;
+  return *this;
+}
+void DataPageHeaderV3::printTo(std::ostream& out) const {
+  using ::apache::thrift::to_string;
+  out << "DataPageHeaderV3(";
+  out << "num_values=" << to_string(num_values);
+  out << ", " << "num_nulls=" << to_string(num_nulls);
+  out << ", " << "num_rows=" << to_string(num_rows);
+  out << ", " << "encoding=" << to_string(encoding);
+  out << ", " << "values_encoding=" << to_string(values_encoding);
+  out << ", " << "definition_levels_byte_length=" << to_string(definition_levels_byte_length);
+  out << ", " << "repetition_levels_byte_length=" << to_string(repetition_levels_byte_length);
+  out << ", " << "is_compressed=" << to_string(is_compressed);
+  out << ", " << "statistics="; (__isset.statistics ? (out << to_string(statistics)) : (out << "<null>"));
+  out << ", " << "encoding_metadata="; (__isset.encoding_metadata ? (out << to_string(encoding_metadata)) : (out << "<null>"));
+  out << ", " << "repetition_level_encodings="; (__isset.repetition_level_encodings ? (out << to_string(repetition_level_encodings)) : (out << "<null>"));
+  out << ", " << "definition_level_encodings="; (__isset.definition_level_encodings ? (out << to_string(definition_level_encodings)) : (out << "<null>"));
+  out << ")";
+}
+
+
 SplitBlockAlgorithm::~SplitBlockAlgorithm() noexcept {
 }
 
@@ -3582,6 +3883,16 @@ void PageHeader::__set_data_page_header_v2(const DataPageHeaderV2& val) {
   this->data_page_header_v2 = val;
 __isset.data_page_header_v2 = true;
 }
+
+void PageHeader::__set_symbol_table_page_header(const SymbolTablePageHeader& val) {
+  this->symbol_table_page_header = val;
+__isset.symbol_table_page_header = true;
+}
+
+void PageHeader::__set_data_page_header_v3(const DataPageHeaderV3& val) {
+  this->data_page_header_v3 = val;
+__isset.data_page_header_v3 = true;
+}
 std::ostream& operator<<(std::ostream& out, const PageHeader& obj)
 {
   obj.printTo(out);
@@ -3599,6 +3910,8 @@ void swap(PageHeader &a, PageHeader &b) {
   swap(a.index_page_header, b.index_page_header);
   swap(a.dictionary_page_header, b.dictionary_page_header);
   swap(a.data_page_header_v2, b.data_page_header_v2);
+  swap(a.symbol_table_page_header, b.symbol_table_page_header);
+  swap(a.data_page_header_v3, b.data_page_header_v3);
   swap(a.__isset, b.__isset);
 }
 
@@ -3630,6 +3943,14 @@ bool PageHeader::operator==(const PageHeader & rhs) const
     return false;
   else if (__isset.data_page_header_v2 && !(data_page_header_v2 == rhs.data_page_header_v2))
     return false;
+  if (__isset.symbol_table_page_header != rhs.__isset.symbol_table_page_header)
+    return false;
+  else if (__isset.symbol_table_page_header && !(symbol_table_page_header == rhs.symbol_table_page_header))
+    return false;
+  if (__isset.data_page_header_v3 != rhs.__isset.data_page_header_v3)
+    return false;
+  else if (__isset.data_page_header_v3 && !(data_page_header_v3 == rhs.data_page_header_v3))
+    return false;
   return true;
 }
 
@@ -3642,6 +3963,8 @@ PageHeader::PageHeader(const PageHeader& other180) {
   index_page_header = other180.index_page_header;
   dictionary_page_header = other180.dictionary_page_header;
   data_page_header_v2 = other180.data_page_header_v2;
+  symbol_table_page_header = other180.symbol_table_page_header;
+  data_page_header_v3 = other180.data_page_header_v3;
   __isset = other180.__isset;
 }
 PageHeader::PageHeader(PageHeader&& other181) noexcept {
@@ -3653,6 +3976,8 @@ PageHeader::PageHeader(PageHeader&& other181) noexcept {
   index_page_header = std::move(other181.index_page_header);
   dictionary_page_header = std::move(other181.dictionary_page_header);
   data_page_header_v2 = std::move(other181.data_page_header_v2);
+  symbol_table_page_header = std::move(other181.symbol_table_page_header);
+  data_page_header_v3 = std::move(other181.data_page_header_v3);
   __isset = other181.__isset;
 }
 PageHeader& PageHeader::operator=(const PageHeader& other182) {
@@ -3664,6 +3989,8 @@ PageHeader& PageHeader::operator=(const PageHeader& other182) {
   index_page_header = other182.index_page_header;
   dictionary_page_header = other182.dictionary_page_header;
   data_page_header_v2 = other182.data_page_header_v2;
+  symbol_table_page_header = other182.symbol_table_page_header;
+  data_page_header_v3 = other182.data_page_header_v3;
   __isset = other182.__isset;
   return *this;
 }
@@ -3676,6 +4003,8 @@ PageHeader& PageHeader::operator=(PageHeader&& other183) noexcept {
   index_page_header = std::move(other183.index_page_header);
   dictionary_page_header = std::move(other183.dictionary_page_header);
   data_page_header_v2 = std::move(other183.data_page_header_v2);
+  symbol_table_page_header = std::move(other183.symbol_table_page_header);
+  data_page_header_v3 = std::move(other183.data_page_header_v3);
   __isset = other183.__isset;
   return *this;
 }
@@ -3690,6 +4019,8 @@ void PageHeader::printTo(std::ostream& out) const {
   out << ", " << "index_page_header="; (__isset.index_page_header ? (out << to_string(index_page_header)) : (out << "<null>"));
   out << ", " << "dictionary_page_header="; (__isset.dictionary_page_header ? (out << to_string(dictionary_page_header)) : (out << "<null>"));
   out << ", " << "data_page_header_v2="; (__isset.data_page_header_v2 ? (out << to_string(data_page_header_v2)) : (out << "<null>"));
+  out << ", " << "symbol_table_page_header="; (__isset.symbol_table_page_header ? (out << to_string(symbol_table_page_header)) : (out << "<null>"));
+  out << ", " << "data_page_header_v3="; (__isset.data_page_header_v3 ? (out << to_string(data_page_header_v3)) : (out << "<null>"));
   out << ")";
 }
 
@@ -4012,6 +4343,11 @@ void ColumnMetaData::__set_geospatial_statistics(const GeospatialStatistics& val
   this->geospatial_statistics = val;
 __isset.geospatial_statistics = true;
 }
+
+void ColumnMetaData::__set_symbol_table_page_offsets(const std::vector<int64_t>& val) {
+  this->symbol_table_page_offsets = val;
+__isset.symbol_table_page_offsets = true;
+}
 std::ostream& operator<<(std::ostream& out, const ColumnMetaData& obj)
 {
   obj.printTo(out);
@@ -4038,6 +4374,7 @@ void swap(ColumnMetaData &a, ColumnMetaData &b) {
   swap(a.bloom_filter_length, b.bloom_filter_length);
   swap(a.size_statistics, b.size_statistics);
   swap(a.geospatial_statistics, b.geospatial_statistics);
+  swap(a.symbol_table_page_offsets, b.symbol_table_page_offsets);
   swap(a.__isset, b.__isset);
 }
 
@@ -4095,6 +4432,10 @@ bool ColumnMetaData::operator==(const ColumnMetaData & rhs) const
     return false;
   else if (__isset.geospatial_statistics && !(geospatial_statistics == rhs.geospatial_statistics))
     return false;
+  if (__isset.symbol_table_page_offsets != rhs.__isset.symbol_table_page_offsets)
+    return false;
+  else if (__isset.symbol_table_page_offsets && !(symbol_table_page_offsets == rhs.symbol_table_page_offsets))
+    return false;
   return true;
 }
 
@@ -4116,6 +4457,7 @@ ColumnMetaData::ColumnMetaData(const ColumnMetaData& other225) {
   bloom_filter_length = other225.bloom_filter_length;
   size_statistics = other225.size_statistics;
   geospatial_statistics = other225.geospatial_statistics;
+  symbol_table_page_offsets = other225.symbol_table_page_offsets;
   __isset = other225.__isset;
 }
 ColumnMetaData::ColumnMetaData(ColumnMetaData&& other226) noexcept {
@@ -4136,6 +4478,7 @@ ColumnMetaData::ColumnMetaData(ColumnMetaData&& other226) noexcept {
   bloom_filter_length = other226.bloom_filter_length;
   size_statistics = std::move(other226.size_statistics);
   geospatial_statistics = std::move(other226.geospatial_statistics);
+  symbol_table_page_offsets = std::move(other226.symbol_table_page_offsets);
   __isset = other226.__isset;
 }
 ColumnMetaData& ColumnMetaData::operator=(const ColumnMetaData& other227) {
@@ -4156,6 +4499,7 @@ ColumnMetaData& ColumnMetaData::operator=(const ColumnMetaData& other227) {
   bloom_filter_length = other227.bloom_filter_length;
   size_statistics = other227.size_statistics;
   geospatial_statistics = other227.geospatial_statistics;
+  symbol_table_page_offsets = other227.symbol_table_page_offsets;
   __isset = other227.__isset;
   return *this;
 }
@@ -4177,6 +4521,7 @@ ColumnMetaData& ColumnMetaData::operator=(ColumnMetaData&& other228) noexcept {
   bloom_filter_length = other228.bloom_filter_length;
   size_statistics = std::move(other228.size_statistics);
   geospatial_statistics = std::move(other228.geospatial_statistics);
+  symbol_table_page_offsets = std::move(other228.symbol_table_page_offsets);
   __isset = other228.__isset;
   return *this;
 }
