@@ -985,7 +985,6 @@ struct ColumnMetaData {
 
   /** Optional statistics specific for Geometry and Geography logical types */
   17: optional GeospatialStatistics geospatial_statistics;
-
 }
 
 struct EncryptionWithFooterKey {

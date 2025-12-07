@@ -520,11 +520,11 @@ class SizeStatistics {
    * schema information multiplied by the number of non-null and null values.
    * The number of null/non-null values can be inferred from the histograms
    * below.
-   *
+   * 
    * For example, if a column chunk is dictionary-encoded with dictionary
    * ["a", "bc", "cde"], and a data page contains the indices [0, 0, 1, 2],
    * then this value for that data page should be 7 (1 + 1 + 2 + 3).
-   *
+   * 
    * This field should only be set for types that use BYTE_ARRAY as their
    * physical type.
    */
@@ -534,18 +534,18 @@ class SizeStatistics {
    * repetition (i.e. size=max repetition_level+1) where each element
    * represents the number of times the repetition level was observed in the
    * data.
-   *
+   * 
    * This field may be omitted if max_repetition_level is 0 without loss
    * of information.
-   *
+   * 
    */
   std::vector<int64_t>  repetition_level_histogram;
   /**
    * Same as repetition_level_histogram except for definition levels.
-   *
+   * 
    * This field may be omitted if max_definition_level is 0 or 1 without
    * loss of information.
-   *
+   * 
    */
   std::vector<int64_t>  definition_level_histogram;
 
@@ -725,14 +725,14 @@ class Statistics {
   virtual ~Statistics() noexcept;
   /**
    * DEPRECATED: min and max value of the column. Use min_value and max_value.
-   *
+   * 
    * Values are encoded using PLAIN encoding, except that variable-length byte
    * arrays do not include a length prefix.
-   *
+   * 
    * These fields encode min and max values determined by signed comparison
    * only. New files should use the correct order for a column's logical type
    * and store the values in the min_value and max_value fields.
-   *
+   * 
    * To support older readers, these may be set when the column order is
    * signed.
    */
@@ -740,7 +740,7 @@ class Statistics {
   std::string min;
   /**
    * Count of null values in the column.
-   *
+   * 
    * Writers SHOULD always write this field even if it is zero (i.e. no null value)
    * or the column is not nullable.
    * Readers MUST distinguish between null_count not being present and null_count == 0.
@@ -753,13 +753,13 @@ class Statistics {
   int64_t distinct_count;
   /**
    * Lower and upper bound values for the column, determined by its ColumnOrder.
-   *
+   * 
    * These may be the actual minimum and maximum values found on a page or column
    * chunk, but can also be (more compact) values that do not exist on a page or
    * column chunk. For example, instead of storing "Blart Versenwald III", a writer
    * may set min_value="B", max_value="C". Such more compact values must still be
    * valid values within the column's logical type.
-   *
+   * 
    * Values are encoded using PLAIN encoding, except that variable-length byte
    * arrays do not include a length prefix.
    */
@@ -1593,7 +1593,7 @@ class GeographyType {
   virtual ~GeographyType() noexcept;
   std::string crs;
   /**
-   *
+   * 
    * @see EdgeInterpolationAlgorithm
    */
   EdgeInterpolationAlgorithm::type algorithm;
@@ -1765,7 +1765,7 @@ class SchemaElement {
   virtual ~SchemaElement() noexcept;
   /**
    * Data type for this field. Not set if the current element is a non-leaf node
-   *
+   * 
    * @see Type
    */
   Type::type type;
@@ -1779,7 +1779,7 @@ class SchemaElement {
   /**
    * repetition of the field. The root of the schema does not have a repetition_type.
    * All other nodes must have one
-   *
+   * 
    * @see FieldRepetitionType
    */
   FieldRepetitionType::type repetition_type;
@@ -1797,16 +1797,16 @@ class SchemaElement {
   /**
    * DEPRECATED: When the schema is the result of a conversion from another model.
    * Used to record the original type to help with cross conversion.
-   *
+   * 
    * This is superseded by logicalType.
-   *
+   * 
    * @see ConvertedType
    */
   ConvertedType::type converted_type;
   /**
    * DEPRECATED: Used when this column contains decimal data.
    * See the DECIMAL converted type for more details.
-   *
+   * 
    * This is superseded by using the DecimalType annotation in logicalType.
    */
   int32_t scale;
@@ -1818,7 +1818,7 @@ class SchemaElement {
   int32_t field_id;
   /**
    * The logical type of this SchemaElement
-   *
+   * 
    * LogicalType replaces ConvertedType, but ConvertedType is still required
    * for some logical types to ensure forward-compatibility in format v1.
    */
@@ -1885,28 +1885,28 @@ class DataPageHeader {
   virtual ~DataPageHeader() noexcept;
   /**
    * Number of values, including NULLs, in this data page.
-   *
+   * 
    * If a OffsetIndex is present, a page must begin at a row
    * boundary (repetition_level = 0). Otherwise, pages may begin
    * within a row (repetition_level > 0).
-   *
+   * 
    */
   int32_t num_values;
   /**
    * Encoding used for this data page *
-   *
+   * 
    * @see Encoding
    */
   Encoding::type encoding;
   /**
    * Encoding used for definition levels *
-   *
+   * 
    * @see Encoding
    */
   Encoding::type definition_level_encoding;
   /**
    * Encoding used for repetition levels *
-   *
+   * 
    * @see Encoding
    */
   Encoding::type repetition_level_encoding;
@@ -2004,7 +2004,7 @@ class DictionaryPageHeader {
   int32_t num_values;
   /**
    * Encoding using this dictionary page *
-   *
+   * 
    * @see Encoding
    */
   Encoding::type encoding;
@@ -2075,12 +2075,12 @@ class DataPageHeaderV2 {
    * Number of rows in this data page. Every page must begin at a
    * row boundary (repetition_level = 0): rows must **not** be
    * split across page boundaries when using V2 data pages.
-   *
+   * 
    */
   int32_t num_rows;
   /**
    * Encoding used for data in this page *
-   *
+   * 
    * @see Encoding
    */
   Encoding::type encoding;
@@ -2177,13 +2177,13 @@ class DataPageHeaderV3 {
   int32_t num_rows;
   /**
    * Encoding used for values in this page (deprecated, use values_encoding)
-   *
+   * 
    * @see Encoding
    */
   Encoding::type encoding;
   /**
    * Encoding used for values in this page
-   *
+   * 
    * @see Encoding
    */
   Encoding::type values_encoding;
@@ -2582,7 +2582,7 @@ class PageHeader {
   virtual ~PageHeader() noexcept;
   /**
    * the type of the page: indicates which of the *_header fields is set *
-   *
+   * 
    * @see PageType
    */
   PageType::type type;
@@ -2596,7 +2596,7 @@ class PageHeader {
   int32_t compressed_page_size;
   /**
    * The 32-bit CRC checksum for the page, to be be calculated as follows:
-   *
+   * 
    * - The standard CRC32 algorithm is used (with polynomial 0x04C11DB7,
    *   the same as in e.g. GZip).
    * - All page types can have a CRC (v1 and v2 data pages, dictionary pages,
@@ -2608,7 +2608,7 @@ class PageHeader {
    *   encrypted).
    * - The CRC computation therefore takes place after any compression
    *   and encryption steps, if any.
-   *
+   * 
    * If enabled, this allows for disabling checksumming in HDFS if only a few
    * pages need to be read.
    */
@@ -2773,13 +2773,13 @@ class PageEncodingStats {
   virtual ~PageEncodingStats() noexcept;
   /**
    * the page type (data/dic/...) *
-   *
+   * 
    * @see PageType
    */
   PageType::type page_type;
   /**
    * encoding of the page *
-   *
+   * 
    * @see Encoding
    */
   Encoding::type encoding;
@@ -2841,7 +2841,7 @@ class ColumnMetaData {
   virtual ~ColumnMetaData() noexcept;
   /**
    * Type of this column *
-   *
+   * 
    * @see Type
    */
   Type::type type;
@@ -2856,7 +2856,7 @@ class ColumnMetaData {
   std::vector<std::string>  path_in_schema;
   /**
    * Compression codec *
-   *
+   * 
    * @see CompressionCodec
    */
   CompressionCodec::type codec;
@@ -3127,12 +3127,12 @@ class ColumnChunk {
   /**
    * File where column data is stored.  If not set, assumed to be same file as
    * metadata.  This path is relative to the current file.
-   *
+   * 
    */
   std::string file_path;
   /**
    * Deprecated: Byte offset in file_path to the ColumnMetaData
-   *
+   * 
    * Past use of this field has been inconsistent, with some implementations
    * using it to point to the ColumnMetaData and some using it to point to
    * the first page in the column chunk. In many cases, the ColumnMetaData at this
@@ -3146,7 +3146,7 @@ class ColumnChunk {
    * location pointed to by file_path/file_offset.
    * Note: while marked as optional, this field is in fact required by most major
    * Parquet implementations. As such, writers MUST populate this field.
-   *
+   * 
    */
   ColumnMetaData meta_data;
   /**
@@ -3234,7 +3234,7 @@ class RowGroup {
   /**
    * Metadata for each column chunk in this row group.
    * This list must have the same order as the SchemaElement list in FileMetaData.
-   *
+   * 
    */
   std::vector<ColumnChunk>  columns;
   /**
@@ -3387,7 +3387,7 @@ class ColumnOrder {
    *   VARIANT - undefined
    *   GEOMETRY - undefined
    *   GEOGRAPHY - undefined
-   *
+   * 
    * In the absence of logical types, the sort order is determined by the physical type:
    *   BOOLEAN - false, true
    *   INT32 - signed comparison
@@ -3397,7 +3397,7 @@ class ColumnOrder {
    *   DOUBLE - signed comparison of the represented value (*)
    *   BYTE_ARRAY - unsigned byte-wise comparison
    *   FIXED_LEN_BYTE_ARRAY - unsigned byte-wise comparison
-   *
+   * 
    * (*) Because the sorting order is not specified properly for floating
    *     point values (relations vs. total ordering) the following
    *     compatibility rules should be applied when reading statistics:
@@ -3406,7 +3406,7 @@ class ColumnOrder {
    *     - If the min is +0, the row group may contain -0 values as well.
    *     - If the max is -0, the row group may contain +0 values as well.
    *     - When looking for NaN values, min and max should be ignored.
-   *
+   * 
    *     When writing statistics the following rules should be followed:
    *     - NaNs should not be written to min or max statistics fields.
    *     - If the computed max value is zero (whether negative or positive),
@@ -3520,7 +3520,7 @@ class OffsetIndex {
   std::vector<PageLocation>  page_locations;
   /**
    * Unencoded/uncompressed size for BYTE_ARRAY types.
-   *
+   * 
    * See documention for unencoded_byte_array_data_bytes in SizeStatistics for
    * more details on this field.
    */
@@ -3603,13 +3603,13 @@ class ColumnIndex {
    * which direction. This allows readers to perform binary searches in both
    * lists. Readers cannot assume that max_values[i] <= min_values[i+1], even
    * if the lists are ordered.
-   *
+   * 
    * @see BoundaryOrder
    */
   BoundaryOrder::type boundary_order;
   /**
    * A list containing the number of null values for each page
-   *
+   * 
    * Writers SHOULD always write this field even if no null values
    * are present or the column is not nullable.
    * Readers MUST distinguish between null_counts not being present
@@ -3622,19 +3622,19 @@ class ColumnIndex {
    * Contains repetition level histograms for each page
    * concatenated together.  The repetition_level_histogram field on
    * SizeStatistics contains more details.
-   *
+   * 
    * When present the length should always be (number of pages *
    * (max_repetition_level + 1)) elements.
-   *
+   * 
    * Element 0 is the first element of the histogram for the first page.
    * Element (max_repetition_level + 1) is the first element of the histogram
    * for the second page.
-   *
+   * 
    */
   std::vector<int64_t>  repetition_level_histograms;
   /**
    * Same as repetition_level_histograms except for definitions levels.
-   *
+   * 
    */
   std::vector<int64_t>  definition_level_histograms;
 
@@ -3884,7 +3884,7 @@ class FileMetaData {
    * String for application that wrote this file.  This should be in the format
    * <Application> version <App Version> (build <App Build Hash>).
    * e.g. impala version 1.0 (build 6cf94d29b2b7115df4de2c06e2ab4326d721eb55)
-   *
+   * 
    */
   std::string created_by;
   /**
@@ -3894,12 +3894,12 @@ class FileMetaData {
    * matching the columns in the schema. The indexes are not necessary the same
    * though, because only leaf nodes of the schema are represented in the list
    * of sort orders.
-   *
+   * 
    * Without column_orders, the meaning of the min_value and max_value fields
    * in the Statistics object and the ColumnIndex object is undefined. To ensure
    * well-defined behaviour, if these fields are written to a Parquet file,
    * column_orders must be written as well.
-   *
+   * 
    * The obsolete min and max fields in the Statistics object are always sorted
    * by signed comparison regardless of column_orders.
    */

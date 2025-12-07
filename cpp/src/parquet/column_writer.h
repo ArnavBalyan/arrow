@@ -50,7 +50,6 @@ class ColumnDescriptor;
 class ColumnIndexBuilder;
 class DataPage;
 class DictionaryPage;
-class SymbolTablePage;
 class Encryptor;
 class OffsetIndexBuilder;
 class WriterProperties;

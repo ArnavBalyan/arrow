@@ -705,9 +705,6 @@ class BufferedPageWriter : public PageWriter {
     // dictionary page offset should be 0 iff there are no dictionary pages
     auto dictionary_page_offset =
         has_dictionary_pages_ ? pager_->dictionary_page_offset() + final_position : 0;
-    for (int64_t offset : pager_->symbol_table_page_offsets()) {
-      metadata_->AddSymbolTableOffset(offset + final_position);
-    }
     metadata_->Finish(pager_->num_values(), dictionary_page_offset, -1,
                       pager_->data_page_offset() + final_position,
                       pager_->total_compressed_size(), pager_->total_uncompressed_size(),
