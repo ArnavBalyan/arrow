@@ -340,8 +340,7 @@ struct PageType {
     INDEX_PAGE = 1,
     DICTIONARY_PAGE = 2,
     DATA_PAGE_V2 = 3,
-    SYMBOL_TABLE = 4,
-    DATA_PAGE_V3 = 5
+    DATA_PAGE_V3 = 4
   };
 };
 
@@ -350,20 +349,6 @@ extern const std::map<int, const char*> _PageType_VALUES_TO_NAMES;
 std::ostream& operator<<(std::ostream& out, const PageType::type& val);
 
 std::string to_string(const PageType::type& val);
-
-struct SymbolTableType {
-  enum type {
-    FSST = 0,
-    FSST_V12 = 1,
-    ZSTD_DICTIONARY = 2
-  };
-};
-
-extern const std::map<int, const char*> _SymbolTableType_VALUES_TO_NAMES;
-
-std::ostream& operator<<(std::ostream& out, const SymbolTableType::type& val);
-
-std::string to_string(const SymbolTableType::type& val);
 
 /**
  * Enum to annotate whether lists of min/max elements inside ColumnIndex
@@ -444,8 +429,6 @@ class IndexPageHeader;
 class DictionaryPageHeader;
 
 class DataPageHeaderV2;
-
-class SymbolTablePageHeader;
 
 class DataPageHeaderV3;
 
@@ -2159,54 +2142,6 @@ void swap(DataPageHeaderV2 &a, DataPageHeaderV2 &b);
 
 std::ostream& operator<<(std::ostream& out, const DataPageHeaderV2& obj);
 
-typedef struct _SymbolTablePageHeader__isset {
-  _SymbolTablePageHeader__isset() : symbol_table_type(false) {}
-  bool symbol_table_type :1;
-} _SymbolTablePageHeader__isset;
-
-/**
- * Header for symbol table pages (e.g., FSST symbol tables)
- */
-class SymbolTablePageHeader {
- public:
-
-  SymbolTablePageHeader(const SymbolTablePageHeader&) noexcept;
-  SymbolTablePageHeader(SymbolTablePageHeader&&) noexcept;
-  SymbolTablePageHeader& operator=(const SymbolTablePageHeader&) noexcept;
-  SymbolTablePageHeader& operator=(SymbolTablePageHeader&&) noexcept;
-  SymbolTablePageHeader() noexcept;
-
-  virtual ~SymbolTablePageHeader() noexcept;
-  /**
-   * Type of symbol table
-   *
-   * @see SymbolTableType
-   */
-  SymbolTableType::type symbol_table_type;
-
-  _SymbolTablePageHeader__isset __isset;
-
-  void __set_symbol_table_type(const SymbolTableType::type val);
-
-  bool operator == (const SymbolTablePageHeader & rhs) const;
-  bool operator != (const SymbolTablePageHeader &rhs) const {
-    return !(*this == rhs);
-  }
-
-  bool operator < (const SymbolTablePageHeader & ) const;
-
-  template <class Protocol_>
-  uint32_t read(Protocol_* iprot);
-  template <class Protocol_>
-  uint32_t write(Protocol_* oprot) const;
-
-  virtual void printTo(std::ostream& out) const;
-};
-
-void swap(SymbolTablePageHeader &a, SymbolTablePageHeader &b);
-
-std::ostream& operator<<(std::ostream& out, const SymbolTablePageHeader& obj);
-
 typedef struct _DataPageHeaderV3__isset {
   _DataPageHeaderV3__isset() : statistics(false), encoding_metadata(false), repetition_level_encodings(false), definition_level_encodings(false) {}
   bool statistics :1;
@@ -2626,13 +2561,12 @@ void swap(BloomFilterHeader &a, BloomFilterHeader &b);
 std::ostream& operator<<(std::ostream& out, const BloomFilterHeader& obj);
 
 typedef struct _PageHeader__isset {
-  _PageHeader__isset() : crc(false), data_page_header(false), index_page_header(false), dictionary_page_header(false), data_page_header_v2(false), symbol_table_page_header(false), data_page_header_v3(false) {}
+  _PageHeader__isset() : crc(false), data_page_header(false), index_page_header(false), dictionary_page_header(false), data_page_header_v2(false), data_page_header_v3(false) {}
   bool crc :1;
   bool data_page_header :1;
   bool index_page_header :1;
   bool dictionary_page_header :1;
   bool data_page_header_v2 :1;
-  bool symbol_table_page_header :1;
   bool data_page_header_v3 :1;
 } _PageHeader__isset;
 
@@ -2683,7 +2617,6 @@ class PageHeader {
   IndexPageHeader index_page_header;
   DictionaryPageHeader dictionary_page_header;
   DataPageHeaderV2 data_page_header_v2;
-  SymbolTablePageHeader symbol_table_page_header;
   DataPageHeaderV3 data_page_header_v3;
 
   _PageHeader__isset __isset;
@@ -2703,8 +2636,6 @@ class PageHeader {
   void __set_dictionary_page_header(const DictionaryPageHeader& val);
 
   void __set_data_page_header_v2(const DataPageHeaderV2& val);
-
-  void __set_symbol_table_page_header(const SymbolTablePageHeader& val);
 
   void __set_data_page_header_v3(const DataPageHeaderV3& val);
 
@@ -2883,7 +2814,7 @@ void swap(PageEncodingStats &a, PageEncodingStats &b);
 std::ostream& operator<<(std::ostream& out, const PageEncodingStats& obj);
 
 typedef struct _ColumnMetaData__isset {
-  _ColumnMetaData__isset() : key_value_metadata(false), index_page_offset(false), dictionary_page_offset(false), statistics(false), encoding_stats(false), bloom_filter_offset(false), bloom_filter_length(false), size_statistics(false), geospatial_statistics(false), symbol_table_page_offsets(false) {}
+  _ColumnMetaData__isset() : key_value_metadata(false), index_page_offset(false), dictionary_page_offset(false), statistics(false), encoding_stats(false), bloom_filter_offset(false), bloom_filter_length(false), size_statistics(false), geospatial_statistics(false) {}
   bool key_value_metadata :1;
   bool index_page_offset :1;
   bool dictionary_page_offset :1;
@@ -2893,7 +2824,6 @@ typedef struct _ColumnMetaData__isset {
   bool bloom_filter_length :1;
   bool size_statistics :1;
   bool geospatial_statistics :1;
-  bool symbol_table_page_offsets :1;
 } _ColumnMetaData__isset;
 
 /**
@@ -2992,10 +2922,6 @@ class ColumnMetaData {
    * Optional statistics specific for Geometry and Geography logical types
    */
   GeospatialStatistics geospatial_statistics;
-  /**
-   * Offsets in the file to shared symbol tables
-   */
-  std::vector<int64_t> symbol_table_page_offsets;
 
   _ColumnMetaData__isset __isset;
 
@@ -3032,8 +2958,6 @@ class ColumnMetaData {
   void __set_size_statistics(const SizeStatistics& val);
 
   void __set_geospatial_statistics(const GeospatialStatistics& val);
-
-  void __set_symbol_table_page_offsets(const std::vector<int64_t>& val);
 
   bool operator == (const ColumnMetaData & rhs) const;
   bool operator != (const ColumnMetaData &rhs) const {

@@ -106,19 +106,6 @@ constexpr BoundaryOrder::type FromThriftUnsafe(format::BoundaryOrder::type type)
   return static_cast<BoundaryOrder::type>(type);
 }
 
-constexpr SymbolTable::type FromThriftUnsafe(format::SymbolTableType::type type) {
-  switch (type) {
-    case format::SymbolTableType::FSST:
-      return SymbolTable::FSST;
-    case format::SymbolTableType::FSST_V12:
-      return SymbolTable::FSST_V12;
-    case format::SymbolTableType::ZSTD_DICTIONARY:
-      return SymbolTable::ZSTD_DICTIONARY;
-    default:
-      return SymbolTable::UNDEFINED;
-  }
-}
-
 constexpr GeometryLogicalType::EdgeInterpolationAlgorithm FromThriftUnsafe(
     format::EdgeInterpolationAlgorithm::type type) {
   switch (type) {
@@ -171,11 +158,6 @@ struct ThriftEnumTypeTraits<::parquet::format::PageType::type> {
 template <>
 struct ThriftEnumTypeTraits<::parquet::format::BoundaryOrder::type> {
   using ParquetEnum = BoundaryOrder;
-};
-
-template <>
-struct ThriftEnumTypeTraits<::parquet::format::SymbolTableType::type> {
-  using ParquetEnum = SymbolTable;
 };
 
 // If the parquet file is corrupted it is possible the enum value decoded
@@ -445,19 +427,6 @@ constexpr format::BoundaryOrder::type ToThrift(BoundaryOrder::type type) {
     default:
       ARROW_DCHECK(false) << "Cannot reach here";
       return format::BoundaryOrder::UNORDERED;
-  }
-}
-
-constexpr format::SymbolTableType::type ToThrift(SymbolTable::type type) {
-  switch (type) {
-    case SymbolTable::FSST:
-      return format::SymbolTableType::FSST;
-    case SymbolTable::FSST_V12:
-      return format::SymbolTableType::FSST_V12;
-    case SymbolTable::ZSTD_DICTIONARY:
-      return format::SymbolTableType::ZSTD_DICTIONARY;
-    default:
-      return format::SymbolTableType::FSST;
   }
 }
 

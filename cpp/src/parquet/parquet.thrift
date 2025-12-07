@@ -661,8 +661,7 @@ enum PageType {
   INDEX_PAGE = 1;
   DICTIONARY_PAGE = 2;
   DATA_PAGE_V2 = 3;
-  SYMBOL_TABLE = 4;
-  DATA_PAGE_V3 = 5;
+  DATA_PAGE_V3 = 4;
 }
 
 /**
@@ -717,23 +716,6 @@ struct DictionaryPageHeader {
 
   /** If true, the entries in the dictionary are sorted in ascending order **/
   3: optional bool is_sorted;
-}
-
-/** Enumerates supported shared symbol table formats. */
-enum SymbolTableType {
-  FSST = 0;
-  FSST_V12 = 1;
-  ZSTD_DICTIONARY = 2;
-}
-
-/**
- * Symbol table pages hold shared metadata (e.g. compression dictionaries) that can be
- * referenced by subsequent dictionary or data pages within the column chunk.
- * Symbol table pages must appear before the dictionary page (if present) and before
- * any data pages in the column chunk.
- */
-struct SymbolTablePageHeader {
-  1: required SymbolTableType symbol_table_type;
 }
 
 /**
@@ -893,8 +875,7 @@ struct PageHeader {
   6: optional IndexPageHeader index_page_header;
   7: optional DictionaryPageHeader dictionary_page_header;
   8: optional DataPageHeaderV2 data_page_header_v2;
-  9: optional SymbolTablePageHeader symbol_table_page_header;
-  10: optional DataPageHeaderV3 data_page_header_v3;
+  9: optional DataPageHeaderV3 data_page_header_v3;
 }
 
 /**
@@ -1005,12 +986,6 @@ struct ColumnMetaData {
   /** Optional statistics specific for Geometry and Geography logical types */
   17: optional GeospatialStatistics geospatial_statistics;
 
-  /**
-   * Offsets, from the start of the file, of symbol table pages referenced by this
-   * column chunk. Symbol table pages must precede the first data page and the
-   * dictionary page (if present).
-   */
-  18: optional list<i64> symbol_table_page_offsets;
 }
 
 struct EncryptionWithFooterKey {

@@ -261,9 +261,6 @@ class SerializedPageReader : public PageReader {
                                              int compressed_len, int uncompressed_len,
                                              int levels_byte_len = 0);
 
-  void HandleSymbolTablePage(std::shared_ptr<Buffer> page_buffer,
-                             const format::SymbolTablePageHeader& header);
-
   // Returns true for non-data pages, and if we should skip based on
   // data_page_filter_. Performs basic checks on values in the page header.
   // Fills in data_page_statistics.
@@ -312,8 +309,6 @@ class SerializedPageReader : public PageReader {
   // updated by only the page ordinal.
   std::string data_page_aad_;
   std::string data_page_header_aad_;
-
-  std::vector<std::shared_ptr<SymbolTablePage>> symbol_tables_;
 };
 
 void SerializedPageReader::InitDecryption() {
@@ -410,8 +405,6 @@ bool SerializedPageReader::ShouldSkipPage(EncodedStatistics* data_page_statistic
     CheckNumValuesInHeader(dict_header.num_values);
   } else if (page_type == PageType::DATA_PAGE_V3) {
     throw ParquetException("Data page V3 is not supported by this reader");
-  } else if (page_type == PageType::SYMBOL_TABLE) {
-    // Symbol table pages are handled explicitly in NextPage()
   } else {
     // We don't know what this page type is. We're allowed to skip non-data
     // pages.
@@ -616,11 +609,6 @@ std::shared_ptr<Page> SerializedPageReader::NextPage() {
           std::move(data_page_statistics), std::nullopt, SizeStatistics(),
           std::move(repetition_encodings), std::move(definition_encodings),
           std::move(metadata), header.encoding_metadata);
-    } else if (page_type == PageType::SYMBOL_TABLE) {
-      const format::SymbolTablePageHeader& header =
-          current_page_header_.symbol_table_page_header;
-      HandleSymbolTablePage(std::move(page_buffer), header);
-      continue;
     } else {
       throw ParquetException(
           "Internal error, we have already skipped non-data pages in ShouldSkipPage()");
@@ -671,17 +659,6 @@ std::shared_ptr<Buffer> SerializedPageReader::DecompressIfNeeded(
   }
 
   return decompression_buffer_;
-}
-
-void SerializedPageReader::HandleSymbolTablePage(
-    std::shared_ptr<Buffer> page_buffer,
-    const format::SymbolTablePageHeader& header) {
-  SymbolTable::type table_type = SymbolTable::UNDEFINED;
-  if (header.__isset.symbol_table_type) {
-    table_type = LoadEnumSafe(&header.symbol_table_type);
-  }
-  symbol_tables_.push_back(
-    std::make_shared<SymbolTablePage>(std::move(page_buffer), table_type));
 }
 
 }  // namespace

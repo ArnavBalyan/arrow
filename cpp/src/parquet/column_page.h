@@ -225,15 +225,4 @@ class DictionaryPage : public Page {
   bool is_sorted_;
 };
 
-class SymbolTablePage : public Page {
- public:
-  SymbolTablePage(const std::shared_ptr<Buffer>& buffer, SymbolTable::type table_type)
-      : Page(buffer, PageType::SYMBOL_TABLE), table_type_(table_type) {}
-
-  SymbolTable::type symbol_table_type() const { return table_type_; }
-
- private:
-  SymbolTable::type table_type_;
-};
-
 }  // namespace parquet

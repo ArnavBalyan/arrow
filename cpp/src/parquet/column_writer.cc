@@ -349,58 +349,6 @@ class SerializedPageWriter : public PageWriter {
     return uncompressed_size + header_size;
   }
 
-  int64_t WriteSymbolTablePage(const SymbolTablePage& page) override {
-    const int64_t uncompressed_size = page.buffer()->size();
-    if (uncompressed_size > std::numeric_limits<int32_t>::max()) {
-      throw ParquetException(
-          "Uncompressed symbol table page size overflows INT32_MAX. Size:",
-          uncompressed_size);
-    }
-
-    const uint8_t* output_data_buffer = page.buffer()->data();
-    int32_t output_data_len = static_cast<int32_t>(page.buffer()->size());
-
-    if (data_encryptor_.get()) {
-      PARQUET_THROW_NOT_OK(encryption_buffer_->Resize(
-          data_encryptor_->CiphertextLength(output_data_len), false));
-      UpdateEncryption(encryption::kDictionaryPage);
-      output_data_len =
-          data_encryptor_->Encrypt(page.buffer()->span_as<uint8_t>(),
-                                   encryption_buffer_->mutable_span_as<uint8_t>());
-      output_data_buffer = encryption_buffer_->data();
-    }
-
-    format::SymbolTablePageHeader symbol_header;
-    symbol_header.__set_symbol_table_type(ToThrift(page.symbol_table_type()));
-
-    format::PageHeader page_header;
-    page_header.__set_type(format::PageType::SYMBOL_TABLE);
-    page_header.__set_uncompressed_page_size(static_cast<int32_t>(uncompressed_size));
-    page_header.__set_compressed_page_size(static_cast<int32_t>(output_data_len));
-    page_header.__set_symbol_table_page_header(symbol_header);
-
-    if (page_checksum_verification_) {
-      uint32_t crc32 =
-          ::arrow::internal::crc32(/* prev */ 0, output_data_buffer, output_data_len);
-      page_header.__set_crc(static_cast<int32_t>(crc32));
-    }
-
-    PARQUET_ASSIGN_OR_THROW(int64_t start_pos, sink_->Tell());
-    symbol_table_page_offsets_.push_back(start_pos);
-
-    if (meta_encryptor_) {
-      UpdateEncryption(encryption::kDictionaryPageHeader);
-    }
-
-    const int64_t header_size =
-        thrift_serializer_->Serialize(&page_header, sink_.get(), meta_encryptor_.get());
-    PARQUET_THROW_NOT_OK(sink_->Write(output_data_buffer, output_data_len));
-
-    total_uncompressed_size_ += uncompressed_size + header_size;
-    total_compressed_size_ += output_data_len + header_size;
-    return uncompressed_size + header_size;
-  }
-
   void Close(bool has_dictionary, bool fallback) override {
     if (meta_encryptor_ != nullptr) {
       UpdateEncryption(encryption::kColumnMetaData);
@@ -410,9 +358,6 @@ class SerializedPageWriter : public PageWriter {
     FinishPageIndexes(/*final_position=*/0);
 
     // index_page_offset = -1 since they are not supported
-    for (int64_t offset : symbol_table_page_offsets_) {
-      metadata_->AddSymbolTableOffset(offset);
-    }
     metadata_->Finish(num_values_, dictionary_page_offset_, -1, data_page_offset_,
                       total_compressed_size_, total_uncompressed_size_, has_dictionary,
                       fallback, dict_encoding_stats_, data_encoding_stats_,
@@ -633,10 +578,6 @@ class SerializedPageWriter : public PageWriter {
 
   bool page_checksum_verification() { return page_checksum_verification_; }
 
-  const std::vector<int64_t>& symbol_table_page_offsets() const {
-    return symbol_table_page_offsets_;
-  }
-
  private:
   // To allow UpdateEncryption on Close
   friend class BufferedPageWriter;
@@ -724,7 +665,6 @@ class SerializedPageWriter : public PageWriter {
 
   std::map<Encoding::type, int32_t> dict_encoding_stats_;
   std::map<Encoding::type, int32_t> data_encoding_stats_;
-  std::vector<int64_t> symbol_table_page_offsets_;
 
   ColumnIndexBuilder* column_index_builder_;
   OffsetIndexBuilder* offset_index_builder_;
@@ -784,10 +724,6 @@ class BufferedPageWriter : public PageWriter {
 
   int64_t WriteDataPage(const DataPage& page) override {
     return pager_->WriteDataPage(page);
-  }
-
-  int64_t WriteSymbolTablePage(const SymbolTablePage& page) override {
-    return pager_->WriteSymbolTablePage(page);
   }
 
   void Compress(const Buffer& src_buffer, ResizableBuffer* dest_buffer) override {
@@ -1744,15 +1680,6 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
     DictionaryPage page(buffer, current_dict_encoder_->num_entries(),
                         properties_->dictionary_page_encoding());
     total_bytes_written_ += pager_->WriteDictionaryPage(page);
-  }
-
-  void WriteSymbolTable(const std::shared_ptr<Buffer>& buffer,
-                        SymbolTable::type table_type) {
-    if (!buffer || buffer->size() == 0) {
-      return;
-    }
-    SymbolTablePage page(buffer, table_type);
-    total_bytes_written_ += pager_->WriteSymbolTablePage(page);
   }
 
   StatisticsPair GetPageStatistics() override {

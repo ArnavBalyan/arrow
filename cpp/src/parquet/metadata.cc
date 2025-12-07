@@ -1637,12 +1637,6 @@ class ColumnChunkMetaDataBuilder::ColumnChunkMetaDataBuilderImpl {
     column_chunk_->meta_data.__set_geospatial_statistics(ToThrift(val));
   }
 
-  void AddSymbolTableOffset(int64_t offset) {
-    if (offset >= 0) {
-      symbol_table_page_offsets_.push_back(offset);
-    }
-  }
-
   void Finish(int64_t num_values, int64_t dictionary_page_offset,
               int64_t index_page_offset, int64_t data_page_offset,
               int64_t compressed_size, int64_t uncompressed_size, bool has_dictionary,
@@ -1708,11 +1702,6 @@ class ColumnChunkMetaDataBuilder::ColumnChunkMetaDataBuilderImpl {
 
     if (key_value_metadata_) {
       ToThriftKeyValueMetadata(*key_value_metadata_, &column_chunk_->meta_data);
-    }
-
-    if (!symbol_table_page_offsets_.empty()) {
-      column_chunk_->meta_data.__set_symbol_table_page_offsets(
-          symbol_table_page_offsets_);
     }
 
     const auto& encrypt_md =
@@ -1800,7 +1789,6 @@ class ColumnChunkMetaDataBuilder::ColumnChunkMetaDataBuilderImpl {
   const std::shared_ptr<WriterProperties> properties_;
   const ColumnDescriptor* column_;
   std::shared_ptr<const KeyValueMetadata> key_value_metadata_;
-  std::vector<int64_t> symbol_table_page_offsets_;
 };
 
 std::unique_ptr<ColumnChunkMetaDataBuilder> ColumnChunkMetaDataBuilder::Make(
@@ -1865,10 +1853,6 @@ void ColumnChunkMetaDataBuilder::SetSizeStatistics(const SizeStatistics& size_st
 void ColumnChunkMetaDataBuilder::SetGeoStatistics(
     const geospatial::EncodedGeoStatistics& result) {
   impl_->SetGeoStatistics(result);
-}
-
-void ColumnChunkMetaDataBuilder::AddSymbolTableOffset(int64_t offset) {
-  impl_->AddSymbolTableOffset(offset);
 }
 
 void ColumnChunkMetaDataBuilder::SetKeyValueMetadata(

@@ -596,7 +596,6 @@ int _kPageTypeValues[] = {
   PageType::INDEX_PAGE,
   PageType::DICTIONARY_PAGE,
   PageType::DATA_PAGE_V2,
-  PageType::SYMBOL_TABLE,
   PageType::DATA_PAGE_V3
 };
 const char* _kPageTypeNames[] = {
@@ -604,10 +603,9 @@ const char* _kPageTypeNames[] = {
   "INDEX_PAGE",
   "DICTIONARY_PAGE",
   "DATA_PAGE_V2",
-  "SYMBOL_TABLE",
   "DATA_PAGE_V3"
 };
-const std::map<int, const char*> _PageType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(6, _kPageTypeValues, _kPageTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
+const std::map<int, const char*> _PageType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(5, _kPageTypeValues, _kPageTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
 
 std::ostream& operator<<(std::ostream& out, const PageType::type& val) {
   std::map<int, const char*>::const_iterator it = _PageType_VALUES_TO_NAMES.find(val);
@@ -622,37 +620,6 @@ std::ostream& operator<<(std::ostream& out, const PageType::type& val) {
 std::string to_string(const PageType::type& val) {
   std::map<int, const char*>::const_iterator it = _PageType_VALUES_TO_NAMES.find(val);
   if (it != _PageType_VALUES_TO_NAMES.end()) {
-    return std::string(it->second);
-  } else {
-    return std::to_string(static_cast<int>(val));
-  }
-}
-
-int _kSymbolTableTypeValues[] = {
-  SymbolTableType::FSST,
-  SymbolTableType::FSST_V12,
-  SymbolTableType::ZSTD_DICTIONARY
-};
-const char* _kSymbolTableTypeNames[] = {
-  "FSST",
-  "FSST_V12",
-  "ZSTD_DICTIONARY"
-};
-const std::map<int, const char*> _SymbolTableType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(3, _kSymbolTableTypeValues, _kSymbolTableTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
-
-std::ostream& operator<<(std::ostream& out, const SymbolTableType::type& val) {
-  auto it = _SymbolTableType_VALUES_TO_NAMES.find(val);
-  if (it != _SymbolTableType_VALUES_TO_NAMES.end()) {
-    out << it->second;
-  } else {
-    out << static_cast<int>(val);
-  }
-  return out;
-}
-
-std::string to_string(const SymbolTableType::type& val) {
-  auto it = _SymbolTableType_VALUES_TO_NAMES.find(val);
-  if (it != _SymbolTableType_VALUES_TO_NAMES.end()) {
     return std::string(it->second);
   } else {
     return std::to_string(static_cast<int>(val));
@@ -3178,65 +3145,6 @@ void DataPageHeaderV2::printTo(std::ostream& out) const {
 }
 
 
-SymbolTablePageHeader::~SymbolTablePageHeader() noexcept {
-}
-
-SymbolTablePageHeader::SymbolTablePageHeader() noexcept
-   : symbol_table_type(static_cast<SymbolTableType::type>(0)) {
-}
-
-void SymbolTablePageHeader::__set_symbol_table_type(const SymbolTableType::type val) {
-  this->symbol_table_type = val;
-  __isset.symbol_table_type = true;
-}
-std::ostream& operator<<(std::ostream& out, const SymbolTablePageHeader& obj)
-{
-  obj.printTo(out);
-  return out;
-}
-
-
-void swap(SymbolTablePageHeader &a, SymbolTablePageHeader &b) {
-  using ::std::swap;
-  swap(a.symbol_table_type, b.symbol_table_type);
-  swap(a.__isset, b.__isset);
-}
-
-bool SymbolTablePageHeader::operator==(const SymbolTablePageHeader & rhs) const
-{
-  if (__isset.symbol_table_type != rhs.__isset.symbol_table_type)
-    return false;
-  else if (__isset.symbol_table_type && !(symbol_table_type == rhs.symbol_table_type))
-    return false;
-  return true;
-}
-
-SymbolTablePageHeader::SymbolTablePageHeader(const SymbolTablePageHeader& other) noexcept {
-  symbol_table_type = other.symbol_table_type;
-  __isset = other.__isset;
-}
-SymbolTablePageHeader::SymbolTablePageHeader(SymbolTablePageHeader&& other) noexcept {
-  symbol_table_type = other.symbol_table_type;
-  __isset = other.__isset;
-}
-SymbolTablePageHeader& SymbolTablePageHeader::operator=(const SymbolTablePageHeader& other) noexcept {
-  symbol_table_type = other.symbol_table_type;
-  __isset = other.__isset;
-  return *this;
-}
-SymbolTablePageHeader& SymbolTablePageHeader::operator=(SymbolTablePageHeader&& other) noexcept {
-  symbol_table_type = other.symbol_table_type;
-  __isset = other.__isset;
-  return *this;
-}
-void SymbolTablePageHeader::printTo(std::ostream& out) const {
-  using ::apache::thrift::to_string;
-  out << "SymbolTablePageHeader(";
-  out << "symbol_table_type="; (__isset.symbol_table_type ? (out << to_string(symbol_table_type)) : (out << "<null>"));
-  out << ")";
-}
-
-
 DataPageHeaderV3::~DataPageHeaderV3() noexcept {
 }
 
@@ -3884,11 +3792,6 @@ void PageHeader::__set_data_page_header_v2(const DataPageHeaderV2& val) {
 __isset.data_page_header_v2 = true;
 }
 
-void PageHeader::__set_symbol_table_page_header(const SymbolTablePageHeader& val) {
-  this->symbol_table_page_header = val;
-__isset.symbol_table_page_header = true;
-}
-
 void PageHeader::__set_data_page_header_v3(const DataPageHeaderV3& val) {
   this->data_page_header_v3 = val;
 __isset.data_page_header_v3 = true;
@@ -3910,7 +3813,6 @@ void swap(PageHeader &a, PageHeader &b) {
   swap(a.index_page_header, b.index_page_header);
   swap(a.dictionary_page_header, b.dictionary_page_header);
   swap(a.data_page_header_v2, b.data_page_header_v2);
-  swap(a.symbol_table_page_header, b.symbol_table_page_header);
   swap(a.data_page_header_v3, b.data_page_header_v3);
   swap(a.__isset, b.__isset);
 }
@@ -3943,10 +3845,6 @@ bool PageHeader::operator==(const PageHeader & rhs) const
     return false;
   else if (__isset.data_page_header_v2 && !(data_page_header_v2 == rhs.data_page_header_v2))
     return false;
-  if (__isset.symbol_table_page_header != rhs.__isset.symbol_table_page_header)
-    return false;
-  else if (__isset.symbol_table_page_header && !(symbol_table_page_header == rhs.symbol_table_page_header))
-    return false;
   if (__isset.data_page_header_v3 != rhs.__isset.data_page_header_v3)
     return false;
   else if (__isset.data_page_header_v3 && !(data_page_header_v3 == rhs.data_page_header_v3))
@@ -3963,7 +3861,6 @@ PageHeader::PageHeader(const PageHeader& other180) {
   index_page_header = other180.index_page_header;
   dictionary_page_header = other180.dictionary_page_header;
   data_page_header_v2 = other180.data_page_header_v2;
-  symbol_table_page_header = other180.symbol_table_page_header;
   data_page_header_v3 = other180.data_page_header_v3;
   __isset = other180.__isset;
 }
@@ -3976,7 +3873,6 @@ PageHeader::PageHeader(PageHeader&& other181) noexcept {
   index_page_header = std::move(other181.index_page_header);
   dictionary_page_header = std::move(other181.dictionary_page_header);
   data_page_header_v2 = std::move(other181.data_page_header_v2);
-  symbol_table_page_header = std::move(other181.symbol_table_page_header);
   data_page_header_v3 = std::move(other181.data_page_header_v3);
   __isset = other181.__isset;
 }
@@ -3989,7 +3885,6 @@ PageHeader& PageHeader::operator=(const PageHeader& other182) {
   index_page_header = other182.index_page_header;
   dictionary_page_header = other182.dictionary_page_header;
   data_page_header_v2 = other182.data_page_header_v2;
-  symbol_table_page_header = other182.symbol_table_page_header;
   data_page_header_v3 = other182.data_page_header_v3;
   __isset = other182.__isset;
   return *this;
@@ -4003,7 +3898,6 @@ PageHeader& PageHeader::operator=(PageHeader&& other183) noexcept {
   index_page_header = std::move(other183.index_page_header);
   dictionary_page_header = std::move(other183.dictionary_page_header);
   data_page_header_v2 = std::move(other183.data_page_header_v2);
-  symbol_table_page_header = std::move(other183.symbol_table_page_header);
   data_page_header_v3 = std::move(other183.data_page_header_v3);
   __isset = other183.__isset;
   return *this;
@@ -4019,7 +3913,6 @@ void PageHeader::printTo(std::ostream& out) const {
   out << ", " << "index_page_header="; (__isset.index_page_header ? (out << to_string(index_page_header)) : (out << "<null>"));
   out << ", " << "dictionary_page_header="; (__isset.dictionary_page_header ? (out << to_string(dictionary_page_header)) : (out << "<null>"));
   out << ", " << "data_page_header_v2="; (__isset.data_page_header_v2 ? (out << to_string(data_page_header_v2)) : (out << "<null>"));
-  out << ", " << "symbol_table_page_header="; (__isset.symbol_table_page_header ? (out << to_string(symbol_table_page_header)) : (out << "<null>"));
   out << ", " << "data_page_header_v3="; (__isset.data_page_header_v3 ? (out << to_string(data_page_header_v3)) : (out << "<null>"));
   out << ")";
 }
@@ -4343,11 +4236,6 @@ void ColumnMetaData::__set_geospatial_statistics(const GeospatialStatistics& val
   this->geospatial_statistics = val;
 __isset.geospatial_statistics = true;
 }
-
-void ColumnMetaData::__set_symbol_table_page_offsets(const std::vector<int64_t>& val) {
-  this->symbol_table_page_offsets = val;
-__isset.symbol_table_page_offsets = true;
-}
 std::ostream& operator<<(std::ostream& out, const ColumnMetaData& obj)
 {
   obj.printTo(out);
@@ -4374,7 +4262,6 @@ void swap(ColumnMetaData &a, ColumnMetaData &b) {
   swap(a.bloom_filter_length, b.bloom_filter_length);
   swap(a.size_statistics, b.size_statistics);
   swap(a.geospatial_statistics, b.geospatial_statistics);
-  swap(a.symbol_table_page_offsets, b.symbol_table_page_offsets);
   swap(a.__isset, b.__isset);
 }
 
@@ -4432,10 +4319,6 @@ bool ColumnMetaData::operator==(const ColumnMetaData & rhs) const
     return false;
   else if (__isset.geospatial_statistics && !(geospatial_statistics == rhs.geospatial_statistics))
     return false;
-  if (__isset.symbol_table_page_offsets != rhs.__isset.symbol_table_page_offsets)
-    return false;
-  else if (__isset.symbol_table_page_offsets && !(symbol_table_page_offsets == rhs.symbol_table_page_offsets))
-    return false;
   return true;
 }
 
@@ -4457,7 +4340,6 @@ ColumnMetaData::ColumnMetaData(const ColumnMetaData& other225) {
   bloom_filter_length = other225.bloom_filter_length;
   size_statistics = other225.size_statistics;
   geospatial_statistics = other225.geospatial_statistics;
-  symbol_table_page_offsets = other225.symbol_table_page_offsets;
   __isset = other225.__isset;
 }
 ColumnMetaData::ColumnMetaData(ColumnMetaData&& other226) noexcept {
@@ -4478,7 +4360,6 @@ ColumnMetaData::ColumnMetaData(ColumnMetaData&& other226) noexcept {
   bloom_filter_length = other226.bloom_filter_length;
   size_statistics = std::move(other226.size_statistics);
   geospatial_statistics = std::move(other226.geospatial_statistics);
-  symbol_table_page_offsets = std::move(other226.symbol_table_page_offsets);
   __isset = other226.__isset;
 }
 ColumnMetaData& ColumnMetaData::operator=(const ColumnMetaData& other227) {
@@ -4499,7 +4380,6 @@ ColumnMetaData& ColumnMetaData::operator=(const ColumnMetaData& other227) {
   bloom_filter_length = other227.bloom_filter_length;
   size_statistics = other227.size_statistics;
   geospatial_statistics = other227.geospatial_statistics;
-  symbol_table_page_offsets = other227.symbol_table_page_offsets;
   __isset = other227.__isset;
   return *this;
 }
@@ -4521,7 +4401,6 @@ ColumnMetaData& ColumnMetaData::operator=(ColumnMetaData&& other228) noexcept {
   bloom_filter_length = other228.bloom_filter_length;
   size_statistics = std::move(other228.size_statistics);
   geospatial_statistics = std::move(other228.geospatial_statistics);
-  symbol_table_page_offsets = std::move(other228.symbol_table_page_offsets);
   __isset = other228.__isset;
   return *this;
 }
