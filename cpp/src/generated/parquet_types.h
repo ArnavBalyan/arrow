@@ -297,7 +297,8 @@ struct Encoding {
      * Added in 2.8 for FLOAT and DOUBLE.
      * Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
      */
-    BYTE_STREAM_SPLIT = 9
+    BYTE_STREAM_SPLIT = 9,
+    FSST = 10
   };
 };
 
@@ -340,7 +341,8 @@ struct PageType {
     DATA_PAGE = 0,
     INDEX_PAGE = 1,
     DICTIONARY_PAGE = 2,
-    DATA_PAGE_V2 = 3
+    DATA_PAGE_V2 = 3,
+    SYMBOL_TABLE_PAGE = 4
   };
 };
 

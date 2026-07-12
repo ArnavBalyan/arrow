@@ -21,6 +21,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <string>
@@ -46,6 +47,7 @@
 #include "arrow/visit_data_inline.h"
 
 #include "parquet/exception.h"
+#include "parquet/fsst_codec.h"
 #include "parquet/platform.h"
 #include "parquet/schema.h"
 #include "parquet/types.h"
@@ -1761,6 +1763,209 @@ std::shared_ptr<Buffer> RleBooleanEncoder::FlushValues() {
   return buffer;
 }
 
+
+class FsstEncoder : public EncoderImpl, virtual public TypedEncoder<ByteArrayType> {
+ public:
+  using T = ByteArray;
+  using TypedEncoder<ByteArrayType>::Put;
+
+  explicit FsstEncoder(const ColumnDescriptor* descr, MemoryPool* pool)
+      : EncoderImpl(descr, Encoding::FSST, pool) {}
+
+  int64_t EstimatedDataEncodedSize() override {
+    return kFsstDataPageHeaderSize +
+           static_cast<int64_t>(num_values_buffered_) * kFsstEndOffsetSize +
+           static_cast<int64_t>(total_bytes_) * kFsstWorstCaseExpansion;
+  }
+
+  void TrainFsstSymbolTable() override {
+    DCHECK(values_.empty()) << "All values must be flushed before training";
+    if (total_stashed_values_ == 0) return;
+
+    std::vector<const uint8_t*> ptrs;
+    std::vector<size_t> lengths;
+    ptrs.reserve(total_stashed_values_);
+    lengths.reserve(total_stashed_values_);
+    for (const auto& batch : page_batches_) {
+      for (const auto& s : batch) {
+        ptrs.push_back(reinterpret_cast<const uint8_t*>(s.data()));
+        lengths.push_back(s.size());
+      }
+    }
+
+    if (!codec_.Train(total_stashed_values_, lengths.data(), ptrs.data())) {
+      throw ParquetException("FSST symbol table training failed");
+    }
+
+    int st_size = codec_.SerializedSymbolTableSize();
+    PARQUET_ASSIGN_OR_THROW(auto st_buf,
+                            ::arrow::AllocateBuffer(st_size, this->memory_pool()));
+    codec_.SerializeSymbolTable(st_buf->mutable_data(), st_size);
+    symbol_table_body_ = std::move(st_buf);
+  }
+
+  std::shared_ptr<Buffer> FlushValues() override {
+    if (num_values_buffered_ == 0) {
+      return nullptr;
+    }
+
+    total_stashed_values_ += values_.size();
+    page_batches_.push_back(std::move(values_));
+    values_.clear();
+    num_values_buffered_ = 0;
+    total_bytes_ = 0;
+    return nullptr;
+  }
+
+  size_t NumFsstPageBatches() const override { return page_batches_.size(); }
+
+  std::shared_ptr<Buffer> CompressFsstPageBatch(size_t batch_index) override {
+    if (batch_index >= page_batches_.size()) {
+      throw ParquetException("FSST page batch index out of range");
+    }
+    return CompressValueBatch(page_batches_[batch_index]);
+  }
+
+  std::shared_ptr<Buffer> GetSymbolTableBody() override {
+    return symbol_table_body_;
+  }
+
+  void PutOne(const T& val) {
+    values_.emplace_back(reinterpret_cast<const char*>(val.ptr), val.len);
+    total_bytes_ += val.len;
+    unencoded_byte_array_data_bytes_ += val.len;
+    ++num_values_buffered_;
+  }
+
+  void Put(const T* src, int num_values) override {
+    for (int i = 0; i < num_values; ++i) PutOne(SafeLoad(src + i));
+  }
+
+  void PutSpaced(const T* src, int num_values, const uint8_t* valid_bits,
+                 int64_t valid_bits_offset) override {
+    if (valid_bits != NULLPTR) {
+      for (int i = 0; i < num_values; ++i) {
+        if (::arrow::bit_util::GetBit(valid_bits, valid_bits_offset + i)) {
+          PutOne(SafeLoad(src + i));
+        }
+      }
+    } else {
+      Put(src, num_values);
+    }
+  }
+
+  void Put(const ::arrow::Array& values) override {
+    AssertVarLengthBinary(values);
+    if (::arrow::is_binary_like(values.type_id())) {
+      PutBinaryArray(checked_cast<const ::arrow::BinaryArray&>(values));
+    } else if (::arrow::is_large_binary_like(values.type_id())) {
+      PutBinaryArray(checked_cast<const ::arrow::LargeBinaryArray&>(values));
+    } else if (::arrow::is_binary_view_like(values.type_id())) {
+      PutBinaryArray(checked_cast<const ::arrow::BinaryViewArray&>(values));
+    } else {
+      throw ParquetException("Only binary-like data supported");
+    }
+  }
+
+ private:
+  std::shared_ptr<Buffer> CompressValueBatch(const std::vector<std::string>& batch) {
+    const size_t n = batch.size();
+    std::vector<const uint8_t*> ptrs(n);
+    std::vector<size_t> lengths(n);
+    size_t batch_bytes = 0;
+    for (size_t i = 0; i < n; ++i) {
+      ptrs[i] = reinterpret_cast<const uint8_t*>(batch[i].data());
+      lengths[i] = batch[i].size();
+      batch_bytes += batch[i].size();
+    }
+
+    size_t worst_out = kFsstCompressPadding + kFsstWorstCaseExpansion * batch_bytes;
+    compressed_buf_.resize(worst_out);
+    std::vector<size_t> comp_lens(n);
+    std::vector<uint8_t*> comp_ptrs(n);
+    size_t compressed_count = codec_.CompressBatch(
+        n, lengths.data(), ptrs.data(), worst_out,
+        compressed_buf_.data(), comp_lens.data(), comp_ptrs.data());
+    if (compressed_count != n) {
+      throw ParquetException("FSST: not all values compressed");
+    }
+
+
+    uint32_t data_len = 0;
+    uint32_t max_len = 0;
+    for (size_t i = 0; i < n; ++i) {
+      uint32_t clen = static_cast<uint32_t>(comp_lens[i]);
+      if (clen > max_len) max_len = clen;
+      data_len += clen;
+    }
+
+    uint8_t bits = max_len == 0 ? 1 : static_cast<uint8_t>(std::bit_width(max_len));
+
+    size_t packed_bits = static_cast<size_t>(bits) * n;
+    size_t packed_bytes = (packed_bits + kFsstBitsPerByte - 1) / kFsstBitsPerByte;
+
+    const int total = kFsstDataPageHeaderSize + static_cast<int>(packed_bytes) +
+                      static_cast<int>(data_len);
+
+    auto buffer = AllocateBuffer(pool_, total);
+    uint8_t* p = buffer->mutable_data();
+
+    ::arrow::util::SafeStore(
+        p, ::arrow::bit_util::ToLittleEndian(static_cast<uint32_t>(n)));
+    p[kFsstBitsPerLenOffset] = bits;
+
+    uint8_t* packed = p + kFsstDataPageHeaderSize;
+    std::memset(packed, 0, packed_bytes);
+    size_t bit_pos = 0;
+    for (size_t i = 0; i < n; ++i) {
+      uint32_t val = static_cast<uint32_t>(comp_lens[i]);
+      for (uint8_t b = 0; b < bits; ++b) {
+        if (val & (1u << b)) {
+          packed[bit_pos / kFsstBitsPerByte] |=
+              static_cast<uint8_t>(1u << (bit_pos % kFsstBitsPerByte));
+        }
+        bit_pos++;
+      }
+    }
+
+    uint8_t* data_dst = p + kFsstDataPageHeaderSize + static_cast<int>(packed_bytes);
+    for (size_t i = 0; i < n; ++i) {
+      std::memcpy(data_dst, comp_ptrs[i], comp_lens[i]);
+      data_dst += comp_lens[i];
+    }
+
+    return buffer;
+  }
+
+  template <typename ArrayType>
+  void PutBinaryArray(const ArrayType& array) {
+    PARQUET_THROW_NOT_OK(::arrow::VisitArraySpanInline<typename ArrayType::TypeClass>(
+        *array.data(),
+        [&](::std::string_view view) {
+          if (view.size() > kMaxByteArraySize) {
+            return Status::Invalid("Parquet cannot store strings with size 2GB or more");
+          }
+          values_.emplace_back(view);
+          total_bytes_ += view.size();
+          unencoded_byte_array_data_bytes_ += view.size();
+          ++num_values_buffered_;
+          return Status::OK();
+        },
+        []() { return Status::OK(); }));
+  }
+
+  std::vector<std::string> values_;
+  size_t total_bytes_ = 0;
+  int num_values_buffered_ = 0;
+
+  std::vector<std::vector<std::string>> page_batches_;
+  size_t total_stashed_values_ = 0;
+
+  FsstCodec codec_;
+  std::shared_ptr<Buffer> symbol_table_body_;
+  std::vector<uint8_t> compressed_buf_;
+};
+
 }  // namespace
 
 // ----------------------------------------------------------------------
@@ -1861,6 +2066,13 @@ std::unique_ptr<Encoder> MakeEncoder(Type::type type_num, Encoding::type encodin
       default:
         throw ParquetException(
             "DELTA_BYTE_ARRAY only supports BYTE_ARRAY and FIXED_LEN_BYTE_ARRAY");
+    }
+  } else if (encoding == Encoding::FSST) {
+    switch (type_num) {
+      case Type::BYTE_ARRAY:
+        return std::make_unique<FsstEncoder>(descr, pool);
+      default:
+        throw ParquetException("FSST only supports BYTE_ARRAY");
     }
   } else {
     ParquetException::NYI("Selected encoding is not supported");

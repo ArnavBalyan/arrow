@@ -50,6 +50,7 @@
 #include "arrow/visit_data_inline.h"
 
 #include "parquet/exception.h"
+#include "parquet/fsst_codec.h"
 #include "parquet/platform.h"
 #include "parquet/schema.h"
 #include "parquet/types.h"
@@ -2372,6 +2373,222 @@ class ByteStreamSplitDecoder<FLBAType> : public ByteStreamSplitDecoderBase<FLBAT
   }
 };
 
+
+class FsstDecoder : public TypedDecoderImpl<ByteArrayType> {
+ public:
+  using Base = TypedDecoderImpl<ByteArrayType>;
+
+  explicit FsstDecoder(const ColumnDescriptor* descr,
+                       MemoryPool* = ::arrow::default_memory_pool())
+      : Base(descr, Encoding::FSST) {
+    std::memset(&fsst_decoder_, 0, sizeof(fsst_decoder_));
+  }
+
+  void SetFsstSymbolTable(const uint8_t* body, int len) override {
+    if (!FsstCodec::DeserializeSymbolTable(body, len, &fsst_decoder_)) {
+      throw ParquetException("FSST symbol table deserialize failed");
+    }
+    has_symbol_table_ = true;
+  }
+
+  void SetData(int num_values, const uint8_t* data, int len) override {
+    Base::SetData(num_values, data, len);
+    if (len < kFsstDataPageHeaderSize) {
+      throw ParquetException("FSST page body too short");
+    }
+
+    num_page_values_ = static_cast<int>(::arrow::bit_util::FromLittleEndian(
+        ::arrow::util::SafeLoadAs<uint32_t>(data)));
+    uint8_t bits_per_len = data[kFsstBitsPerLenOffset];
+
+    size_t packed_bits = static_cast<size_t>(bits_per_len) * num_page_values_;
+    size_t packed_bytes = (packed_bits + kFsstBitsPerByte - 1) / kFsstBitsPerByte;
+    if (len < kFsstDataPageHeaderSize + static_cast<int>(packed_bytes)) {
+      throw ParquetException("FSST page too short for bit-packed lengths");
+    }
+
+    const uint8_t* packed = data + kFsstDataPageHeaderSize;
+    reconstructed_offsets_.resize(static_cast<size_t>(num_page_values_) *
+                                  kFsstEndOffsetSize);
+    size_t bit_pos = 0;
+    uint32_t cumulative = 0;
+    for (int i = 0; i < num_page_values_; ++i) {
+      uint32_t val = 0;
+      for (uint8_t b = 0; b < bits_per_len; ++b) {
+        if (packed[bit_pos / kFsstBitsPerByte] & (1u << (bit_pos % kFsstBitsPerByte))) {
+          val |= (1u << b);
+        }
+        bit_pos++;
+      }
+      cumulative += val;
+      ::arrow::util::SafeStore(
+          reconstructed_offsets_.data() + static_cast<size_t>(i) * kFsstEndOffsetSize,
+          ::arrow::bit_util::ToLittleEndian(cumulative));
+    }
+    end_offsets_ptr_ = reconstructed_offsets_.data();
+    data_section_ptr_ = data + kFsstDataPageHeaderSize + static_cast<int>(packed_bytes);
+    data_section_len_ = len - kFsstDataPageHeaderSize - static_cast<int>(packed_bytes);
+
+    value_idx_ = 0;
+    out_buf_pos_ = 0;
+    size_t max_decompressed = static_cast<size_t>(data_section_len_) * kFsstMaxSymbolLength +
+                              (kFsstMaxSymbolLength - 1);
+    if (out_buf_.size() < max_decompressed) {
+      out_buf_.resize(max_decompressed);
+    }
+    num_values_ = num_page_values_;
+  }
+
+  int Decode(ByteArray* buffer, int max_values) override {
+    if (!has_symbol_table_) {
+      throw ParquetException("FSST symbol table not set");
+    }
+    max_values = std::min(max_values, num_page_values_ - value_idx_);
+    if (max_values <= 0) return 0;
+
+    const auto* sym = reinterpret_cast<const unsigned long long*>(fsst_decoder_.symbol);
+    const auto* slen = reinterpret_cast<const unsigned char*>(fsst_decoder_.len);
+
+    const uint8_t* offsets_base = end_offsets_ptr_ + value_idx_ * kFsstEndOffsetSize;
+    const uint8_t* data_base = data_section_ptr_;
+    uint8_t* out_base = out_buf_.data();
+    size_t out_size = out_buf_.size();
+    size_t out_pos = out_buf_pos_;
+
+    int prev_end =
+        (value_idx_ == 0)
+            ? 0
+            : static_cast<int>(::arrow::bit_util::FromLittleEndian(
+                  ::arrow::util::SafeLoadAs<uint32_t>(
+                      end_offsets_ptr_ + (value_idx_ - 1) * kFsstEndOffsetSize)));
+
+    for (int i = 0; i < max_values; ++i) {
+      int end = static_cast<int>(::arrow::bit_util::FromLittleEndian(
+          ::arrow::util::SafeLoadAs<uint32_t>(offsets_base + i * kFsstEndOffsetSize)));
+      int comp_len = end - prev_end;
+      if (ARROW_PREDICT_FALSE(comp_len < 0 ||
+                               prev_end + comp_len > data_section_len_)) {
+        throw ParquetException("FSST invalid offset");
+      }
+
+      const unsigned char* in = data_base + prev_end;
+      const unsigned char* in_end = in + comp_len;
+      unsigned char* out = out_base + out_pos;
+      size_t pos_out = 0;
+
+      auto decode_code = [&](size_t code) {
+        std::memcpy(out + pos_out, &sym[code], kFsstMaxSymbolLength);
+        pos_out += slen[code];
+      };
+
+      while (in + kFsstDecodeFastPathCodes <= in_end &&
+             pos_out + kFsstDecodeFastPathHeadroom <= out_size - out_pos) {
+        unsigned int block;
+        std::memcpy(&block, in, sizeof(unsigned int));
+        unsigned int esc_mask = (block & 0x80808080u) &
+            ((((~block) & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) ^ 0x80808080u);
+        if (esc_mask == 0) {
+          for (int k = 0; k < kFsstDecodeFastPathCodes; ++k) decode_code(*in++);
+        } else {
+#ifdef _MSC_VER
+          unsigned long first_esc;
+          _BitScanForward(&first_esc, esc_mask);
+          first_esc >>= 3;
+#else
+          unsigned long first_esc =
+              static_cast<unsigned long>(__builtin_ctzl(
+                  static_cast<unsigned long long>(esc_mask))) >> 3;
+#endif
+          for (unsigned long k = 0; k < first_esc; ++k) decode_code(*in++);
+          in++;
+          out[pos_out++] = *in++;
+        }
+      }
+      while (in < in_end) {
+        size_t code = *in++;
+        if (ARROW_PREDICT_TRUE(code != FSST_ESC)) {
+          decode_code(code);
+        } else {
+          out[pos_out++] = *in++;
+        }
+      }
+
+      buffer[i].ptr = out_base + out_pos;
+      buffer[i].len = static_cast<uint32_t>(pos_out);
+      out_pos += pos_out;
+      prev_end = end;
+    }
+
+    out_buf_pos_ = out_pos;
+    value_idx_ += max_values;
+    num_values_ -= max_values;
+    return max_values;
+  }
+
+  int DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
+                  int64_t valid_bits_offset,
+                  typename EncodingTraits<ByteArrayType>::Accumulator* out) override {
+    int result = 0;
+    PARQUET_THROW_NOT_OK(DecodeArrowDense(num_values, null_count, valid_bits,
+                                          valid_bits_offset, out, &result));
+    return result;
+  }
+
+  int DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
+                  int64_t valid_bits_offset,
+                  typename EncodingTraits<ByteArrayType>::DictAccumulator* out) override {
+    ParquetException::NYI("DecodeArrow DictAccumulator for FSST");
+  }
+
+ private:
+  Status DecodeArrowDense(int num_values, int null_count, const uint8_t* valid_bits,
+                          int64_t valid_bits_offset,
+                          typename EncodingTraits<ByteArrayType>::Accumulator* out,
+                          int* out_num_values) {
+    std::vector<ByteArray> values(num_values - null_count);
+    const int num_valid_values = Decode(values.data(), num_values - null_count);
+    if (ARROW_PREDICT_FALSE(num_values - null_count != num_valid_values)) {
+      throw ParquetException("Expected to decode ", num_values - null_count,
+                             " values, but decoded ", num_valid_values, " values.");
+    }
+
+    auto visit_binary_helper = [&](auto* helper) {
+      auto values_ptr = values.data();
+      int value_idx = 0;
+      RETURN_NOT_OK(
+          VisitBitRuns(valid_bits, valid_bits_offset, num_values,
+                       [&](int64_t position, int64_t run_length, bool is_valid) {
+                         if (is_valid) {
+                           for (int64_t i = 0; i < run_length; ++i) {
+                             const auto& val = values_ptr[value_idx];
+                             RETURN_NOT_OK(helper->AppendValue(
+                                 val.ptr, static_cast<int32_t>(val.len)));
+                             ++value_idx;
+                           }
+                           return Status::OK();
+                         } else {
+                           return helper->AppendNulls(run_length);
+                         }
+                       }));
+      *out_num_values = num_valid_values;
+      return Status::OK();
+    };
+    return DispatchArrowBinaryHelper<ByteArrayType>(
+        out, num_values, {}, visit_binary_helper);
+  }
+
+  fsst_decoder_t fsst_decoder_{};
+  bool has_symbol_table_ = false;
+  int num_page_values_ = 0;
+  const uint8_t* end_offsets_ptr_ = nullptr;
+  const uint8_t* data_section_ptr_ = nullptr;
+  int data_section_len_ = 0;
+  int value_idx_ = 0;
+  std::vector<uint8_t> out_buf_;
+  size_t out_buf_pos_ = 0;
+  std::vector<uint8_t> reconstructed_offsets_;  
+};
+
 }  // namespace
 
 // ----------------------------------------------------------------------
@@ -2443,6 +2660,11 @@ std::unique_ptr<Decoder> MakeDecoder(Type::type type_num, Encoding::type encodin
       return std::make_unique<DeltaLengthByteArrayDecoder>(descr, pool);
     }
     throw ParquetException("DELTA_LENGTH_BYTE_ARRAY only supports BYTE_ARRAY");
+  } else if (encoding == Encoding::FSST) {
+    if (type_num == Type::BYTE_ARRAY) {
+      return std::make_unique<FsstDecoder>(descr, pool);
+    }
+    throw ParquetException("FSST only supports BYTE_ARRAY");
   } else if (encoding == Encoding::RLE) {
     if (type_num == Type::BOOLEAN) {
       return std::make_unique<RleBooleanDecoder>(descr);

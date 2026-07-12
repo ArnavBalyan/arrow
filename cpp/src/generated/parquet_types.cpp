@@ -467,7 +467,8 @@ int _kEncodingValues[] = {
    * Added in 2.8 for FLOAT and DOUBLE.
    * Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
    */
-  Encoding::BYTE_STREAM_SPLIT
+  Encoding::BYTE_STREAM_SPLIT,
+  Encoding::FSST
 };
 const char* _kEncodingNames[] = {
   /**
@@ -529,9 +530,10 @@ const char* _kEncodingNames[] = {
    * Added in 2.8 for FLOAT and DOUBLE.
    * Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
    */
-  "BYTE_STREAM_SPLIT"
+  "BYTE_STREAM_SPLIT",
+  "FSST"
 };
-const std::map<int, const char*> _Encoding_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(9, _kEncodingValues, _kEncodingNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
+const std::map<int, const char*> _Encoding_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(10, _kEncodingValues, _kEncodingNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
 
 std::ostream& operator<<(std::ostream& out, const Encoding::type& val) {
   std::map<int, const char*>::const_iterator it = _Encoding_VALUES_TO_NAMES.find(val);
@@ -597,15 +599,17 @@ int _kPageTypeValues[] = {
   PageType::DATA_PAGE,
   PageType::INDEX_PAGE,
   PageType::DICTIONARY_PAGE,
-  PageType::DATA_PAGE_V2
+  PageType::DATA_PAGE_V2,
+  PageType::SYMBOL_TABLE_PAGE
 };
 const char* _kPageTypeNames[] = {
   "DATA_PAGE",
   "INDEX_PAGE",
   "DICTIONARY_PAGE",
-  "DATA_PAGE_V2"
+  "DATA_PAGE_V2",
+  "SYMBOL_TABLE_PAGE"
 };
-const std::map<int, const char*> _PageType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(4, _kPageTypeValues, _kPageTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
+const std::map<int, const char*> _PageType_VALUES_TO_NAMES(::apache::thrift::TEnumIterator(5, _kPageTypeValues, _kPageTypeNames), ::apache::thrift::TEnumIterator(-1, nullptr, nullptr));
 
 std::ostream& operator<<(std::ostream& out, const PageType::type& val) {
   std::map<int, const char*>::const_iterator it = _PageType_VALUES_TO_NAMES.find(val);

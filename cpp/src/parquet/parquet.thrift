@@ -637,6 +637,8 @@ enum Encoding {
       Support for INT32, INT64 and FIXED_LEN_BYTE_ARRAY added in 2.11.
    */
   BYTE_STREAM_SPLIT = 9;
+
+  FSST = 10;
 }
 
 /**
@@ -664,6 +666,8 @@ enum PageType {
   INDEX_PAGE = 1;
   DICTIONARY_PAGE = 2;
   DATA_PAGE_V2 = 3;
+
+  SYMBOL_TABLE_PAGE = 4;
 }
 
 /**

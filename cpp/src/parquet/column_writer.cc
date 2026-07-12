@@ -353,6 +353,35 @@ class SerializedPageWriter : public PageWriter {
     return uncompressed_size + header_size;
   }
 
+  int64_t WriteSymbolTablePage(const SymbolTablePage& page) override {
+    int64_t uncompressed_size = page.buffer()->size();
+    const uint8_t* output_data = page.buffer()->data();
+    int32_t output_len = static_cast<int32_t>(uncompressed_size);
+
+    format::PageHeader page_header;
+    page_header.__set_type(format::PageType::SYMBOL_TABLE_PAGE);
+    page_header.__set_uncompressed_page_size(static_cast<int32_t>(uncompressed_size));
+    page_header.__set_compressed_page_size(output_len);
+    if (page_checksum_verification_) {
+      uint32_t crc32 =
+          ::arrow::internal::crc32(0, output_data, output_len);
+      page_header.__set_crc(static_cast<int32_t>(crc32));
+    }
+
+    PARQUET_ASSIGN_OR_THROW(int64_t start_pos, sink_->Tell());
+    if (dictionary_page_offset_ == 0) {
+      dictionary_page_offset_ = start_pos;
+    }
+
+    const int64_t header_size =
+        thrift_serializer_->Serialize(&page_header, sink_.get(), nullptr);
+    PARQUET_THROW_NOT_OK(sink_->Write(output_data, output_len));
+
+    total_uncompressed_size_ += uncompressed_size + header_size;
+    total_compressed_size_ += output_len + header_size;
+    return uncompressed_size + header_size;
+  }
+
   void Close(bool has_dictionary, bool fallback) override {
     if (meta_encryptor_ != nullptr) {
       UpdateEncryption(encryption::kColumnMetaData);
@@ -650,7 +679,10 @@ class BufferedPageWriter : public PageWriter {
                      ColumnIndexBuilder* column_index_builder = nullptr,
                      OffsetIndexBuilder* offset_index_builder = nullptr,
                      const CodecOptions& codec_options = CodecOptions{})
-      : final_sink_(std::move(sink)), metadata_(metadata), has_dictionary_pages_(false) {
+      : final_sink_(std::move(sink)),
+        metadata_(metadata),
+        has_dictionary_pages_(false),
+        has_symbol_table_page_(false) {
     in_memory_sink_ = CreateOutputStream(pool);
     pager_ = std::make_unique<SerializedPageWriter>(
         in_memory_sink_, codec, metadata, row_group_ordinal, current_column_ordinal,
@@ -664,15 +696,21 @@ class BufferedPageWriter : public PageWriter {
     return pager_->WriteDictionaryPage(page);
   }
 
+  int64_t WriteSymbolTablePage(const SymbolTablePage& page) override {
+    has_symbol_table_page_ = true;
+    return pager_->WriteSymbolTablePage(page);
+  }
+
   void Close(bool has_dictionary, bool fallback) override {
     if (pager_->meta_encryptor_ != nullptr) {
       pager_->UpdateEncryption(encryption::kColumnMetaData);
     }
     // index_page_offset = -1 since they are not supported
     PARQUET_ASSIGN_OR_THROW(int64_t final_position, final_sink_->Tell());
-    // dictionary page offset should be 0 iff there are no dictionary pages
     auto dictionary_page_offset =
-        has_dictionary_pages_ ? pager_->dictionary_page_offset() + final_position : 0;
+        (has_dictionary_pages_ || has_symbol_table_page_)
+            ? pager_->dictionary_page_offset() + final_position
+            : 0;
     metadata_->Finish(pager_->num_values(), dictionary_page_offset, -1,
                       pager_->data_page_offset() + final_position,
                       pager_->total_compressed_size(), pager_->total_uncompressed_size(),
@@ -707,6 +745,7 @@ class BufferedPageWriter : public PageWriter {
   std::shared_ptr<::arrow::io::BufferOutputStream> in_memory_sink_;
   std::unique_ptr<SerializedPageWriter> pager_;
   bool has_dictionary_pages_;
+  bool has_symbol_table_page_;
 };
 
 std::unique_ptr<PageWriter> PageWriter::Open(
@@ -750,6 +789,7 @@ class ColumnWriterImpl {
         level_info_(internal::LevelInfo::ComputeLevelInfo(metadata->descr())),
         pager_(std::move(pager)),
         has_dictionary_(use_dictionary),
+        has_fsst_(encoding == Encoding::FSST),
         encoding_(encoding),
         properties_(properties),
         allocator_(properties->memory_pool()),
@@ -792,6 +832,8 @@ class ColumnWriterImpl {
 
   // Serializes Dictionary Page if enabled
   virtual void WriteDictionaryPage() = 0;
+
+  virtual void WriteSymbolTablePage() = 0;
 
   // A convenience struct to combine the encoded statistics and size statistics
   struct StatisticsPair {
@@ -860,6 +902,7 @@ class ColumnWriterImpl {
   std::unique_ptr<PageWriter> pager_;
 
   bool has_dictionary_;
+  bool has_fsst_;
   Encoding::type encoding_;
   const WriterProperties* properties_;
 
@@ -911,6 +954,21 @@ class ColumnWriterImpl {
   std::shared_ptr<ResizableBuffer> compressor_temp_buffer_;
 
   std::vector<std::unique_ptr<DataPage>> data_pages_;
+
+  // todo, for poc defer the page info
+  struct DeferredFsstPage {
+    std::shared_ptr<Buffer> def_levels_rle;
+    int64_t def_levels_rle_size;
+    std::shared_ptr<Buffer> rep_levels_rle;
+    int64_t rep_levels_rle_size;
+    int32_t num_values;
+    int32_t null_count;
+    int32_t num_rows;
+    int64_t first_row_index;
+    EncodedStatistics page_stats;
+    SizeStatistics page_size_stats;
+  };
+  std::vector<DeferredFsstPage> deferred_fsst_pages_;
 
   std::optional<internal::ContentDefinedChunker> content_defined_chunker_;
 
@@ -983,6 +1041,37 @@ void ColumnWriterImpl::AddDataPage() {
         descr_->max_repetition_level(), /*include_length_prefix=*/is_v1_data_page);
   }
 
+  if (has_fsst_ && values == nullptr) {
+    auto [page_stats, page_size_stats] = GetPageStatistics();
+    page_stats.ApplyStatSizeLimits(properties_->max_statistics_size(descr_->path()));
+    page_stats.set_is_signed(SortOrder::SIGNED == descr_->sort_order());
+    ResetPageStatistics();
+
+    DeferredFsstPage deferred;
+    PARQUET_ASSIGN_OR_THROW(
+        deferred.def_levels_rle,
+        definition_levels_rle_->CopySlice(0, definition_levels_rle_size));
+    deferred.def_levels_rle_size = definition_levels_rle_size;
+    PARQUET_ASSIGN_OR_THROW(
+        deferred.rep_levels_rle,
+        repetition_levels_rle_->CopySlice(0, repetition_levels_rle_size));
+    deferred.rep_levels_rle_size = repetition_levels_rle_size;
+    deferred.num_values = static_cast<int32_t>(num_buffered_values_);
+    deferred.null_count = static_cast<int32_t>(num_buffered_nulls_);
+    deferred.num_rows = static_cast<int32_t>(num_buffered_rows_);
+    deferred.first_row_index = rows_written_ - num_buffered_rows_;
+    deferred.page_stats = std::move(page_stats);
+    deferred.page_size_stats = std::move(page_size_stats);
+    deferred_fsst_pages_.push_back(std::move(deferred));
+
+    InitSinks();
+    num_buffered_values_ = 0;
+    num_buffered_encoded_values_ = 0;
+    num_buffered_rows_ = 0;
+    num_buffered_nulls_ = 0;
+    return;
+  }
+
   int64_t uncompressed_size =
       definition_levels_rle_size + repetition_levels_rle_size + values->size();
 
@@ -1027,9 +1116,7 @@ void ColumnWriterImpl::BuildDataPageV1(int64_t definition_levels_rle_size,
   int32_t num_values = static_cast<int32_t>(num_buffered_values_);
   int64_t first_row_index = rows_written_ - num_buffered_rows_;
 
-  // Write the page to OutputStream eagerly if there is no dictionary or
-  // if dictionary encoding has fallen back to PLAIN
-  if (has_dictionary_ && !fallback_) {  // Save pages until end of dictionary encoding
+  if ((has_dictionary_ && !fallback_) || has_fsst_) {
     PARQUET_ASSIGN_OR_THROW(
         auto compressed_data_copy,
         compressed_data->CopySlice(0, compressed_data->size(), allocator_));
@@ -1088,9 +1175,7 @@ void ColumnWriterImpl::BuildDataPageV2(int64_t definition_levels_rle_size,
   // here for safety check.
   DCHECK(!page_stats.has_null_count || page_stats.null_count == null_count);
 
-  // Write the page to OutputStream eagerly if there is no dictionary or
-  // if dictionary encoding has fallen back to PLAIN
-  if (has_dictionary_ && !fallback_) {  // Save pages until end of dictionary encoding
+  if ((has_dictionary_ && !fallback_) || has_fsst_) {
     PARQUET_ASSIGN_OR_THROW(auto data_copy,
                             combined->CopySlice(0, combined->size(), allocator_));
     std::unique_ptr<DataPage> page_ptr = std::make_unique<DataPageV2>(
@@ -1113,6 +1198,9 @@ int64_t ColumnWriterImpl::Close() {
     closed_ = true;
     if (has_dictionary_ && !fallback_) {
       WriteDictionaryPage();
+    }
+    if (has_fsst_) {
+      WriteSymbolTablePage();
     }
 
     FlushBufferedDataPages();
@@ -1560,6 +1648,91 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
     DictionaryPage page(buffer, current_dict_encoder_->num_entries(),
                         properties_->dictionary_page_encoding());
     total_bytes_written_ += pager_->WriteDictionaryPage(page);
+  }
+
+  void WriteSymbolTablePage() override {
+    if (num_buffered_values_ > 0) {
+      AddDataPage();
+    }
+
+    current_encoder_->TrainFsstSymbolTable();
+    auto sym_body = current_encoder_->GetSymbolTableBody();
+    if (!sym_body) {
+      throw ParquetException("FSST symbol table not available after training");
+    }
+    SymbolTablePage page(sym_body);
+    total_bytes_written_ += pager_->WriteSymbolTablePage(page);
+
+    size_t num_batches = current_encoder_->NumFsstPageBatches();
+    for (size_t i = 0; i < num_batches; ++i) {
+      auto values = current_encoder_->CompressFsstPageBatch(i);
+      BuildDataPageFromDeferred(deferred_fsst_pages_[i], values);
+    }
+    deferred_fsst_pages_.clear();
+  }
+
+  void BuildDataPageFromDeferred(const DeferredFsstPage& dp,
+                                 const std::shared_ptr<Buffer>& values) {
+    bool is_v1 = properties_->data_page_version() == ParquetDataPageVersion::V1;
+    int64_t uncompressed_size =
+        dp.def_levels_rle_size + dp.rep_levels_rle_size + values->size();
+
+    auto concat_levels_and_values =
+        [&](const std::shared_ptr<Buffer>& val_buf, uint8_t* out) {
+          memcpy(out, dp.rep_levels_rle->data(), dp.rep_levels_rle_size);
+          memcpy(out + dp.rep_levels_rle_size, dp.def_levels_rle->data(),
+                 dp.def_levels_rle_size);
+          memcpy(out + dp.rep_levels_rle_size + dp.def_levels_rle_size,
+                 val_buf->data(), val_buf->size());
+        };
+
+    auto page_stats_copy = dp.page_stats;
+    auto page_size_stats_copy = dp.page_size_stats;
+
+    if (is_v1) {
+      PARQUET_THROW_NOT_OK(uncompressed_data_->Resize(uncompressed_size, false));
+      concat_levels_and_values(values, uncompressed_data_->mutable_data());
+
+      std::shared_ptr<Buffer> compressed_data;
+      if (pager_->has_compressor()) {
+        pager_->Compress(*uncompressed_data_, compressor_temp_buffer_.get());
+        compressed_data = compressor_temp_buffer_;
+      } else {
+        compressed_data = uncompressed_data_;
+      }
+      PARQUET_ASSIGN_OR_THROW(
+          auto compressed_copy,
+          compressed_data->CopySlice(0, compressed_data->size(), allocator_));
+      auto page_ptr = std::make_unique<DataPageV1>(
+          compressed_copy, dp.num_values, encoding_, Encoding::RLE, Encoding::RLE,
+          uncompressed_size, std::move(page_stats_copy), dp.first_row_index,
+          std::move(page_size_stats_copy));
+      total_compressed_bytes_ += page_ptr->size() + sizeof(format::PageHeader);
+      data_pages_.push_back(std::move(page_ptr));
+    } else {
+      bool page_is_compressed = false;
+      std::shared_ptr<Buffer> compressed_values = values;
+      if (pager_->has_compressor() && values->size() > 0) {
+        pager_->Compress(*values, compressor_temp_buffer_.get());
+        if (compressor_temp_buffer_->size() < values->size()) {
+          page_is_compressed = true;
+          compressed_values = compressor_temp_buffer_;
+        }
+      }
+      int64_t combined_size =
+          dp.def_levels_rle_size + dp.rep_levels_rle_size + compressed_values->size();
+      auto combined = AllocateBuffer(allocator_, combined_size);
+      concat_levels_and_values(compressed_values, combined->mutable_data());
+
+      auto page_ptr = std::make_unique<DataPageV2>(
+          combined, dp.num_values, dp.null_count, dp.num_rows, encoding_,
+          static_cast<int32_t>(dp.def_levels_rle_size),
+          static_cast<int32_t>(dp.rep_levels_rle_size), uncompressed_size,
+          page_is_compressed, std::move(page_stats_copy), dp.first_row_index,
+          std::move(page_size_stats_copy));
+      total_compressed_bytes_ += page_ptr->size() + sizeof(format::PageHeader);
+      data_pages_.push_back(std::move(page_ptr));
+    }
   }
 
   StatisticsPair GetPageStatistics() override {

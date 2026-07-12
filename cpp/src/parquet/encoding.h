@@ -170,6 +170,16 @@ class Encoder {
   virtual int64_t ReportUnencodedDataBytes() = 0;
 
   virtual MemoryPool* memory_pool() const = 0;
+
+  virtual void TrainFsstSymbolTable() {}
+
+  virtual std::shared_ptr<Buffer> GetSymbolTableBody() { return nullptr; }
+
+  virtual size_t NumFsstPageBatches() const { return 0; }
+
+  virtual std::shared_ptr<Buffer> CompressFsstPageBatch(size_t) {
+    return nullptr;
+  }
 };
 
 // Base class for value encoders. Since encoders may or not have state (e.g.,
@@ -261,6 +271,8 @@ class Decoder {
   // the number of values left in this page.
   virtual int values_left() const = 0;
   virtual Encoding::type encoding() const = 0;
+
+  virtual void SetFsstSymbolTable(const uint8_t*, int) {}
 };
 
 template <typename DType>

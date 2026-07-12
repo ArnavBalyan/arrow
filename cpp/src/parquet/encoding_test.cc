@@ -2660,4 +2660,265 @@ TEST(DeltaByteArrayEncodingAdHoc, ArrowDirectPut) {
   }
 }
 
+
+class TestFsstEncoding : public TestEncodingBase<ByteArrayType> {
+  using Type = ByteArrayType;
+
+ public:
+  using c_type = ByteArray;
+
+  void CheckRoundtrip() {
+    auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST,
+                                                    false, descr_.get());
+    auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST, descr_.get());
+
+    encoder->Put(draws_, num_values_);
+    encoder->FlushValues();
+    encoder->TrainFsstSymbolTable();
+    ASSERT_EQ(1, encoder->NumFsstPageBatches());
+    encode_buffer_ = encoder->CompressFsstPageBatch(0);
+
+    auto sym_body = encoder->GetSymbolTableBody();
+    ASSERT_NE(sym_body, nullptr);
+    decoder->SetFsstSymbolTable(sym_body->data(), static_cast<int>(sym_body->size()));
+
+    decoder->SetData(num_values_, encode_buffer_->data(),
+                     static_cast<int>(encode_buffer_->size()));
+    int values_decoded = decoder->Decode(decode_buf_, num_values_);
+    ASSERT_EQ(num_values_, values_decoded);
+    ASSERT_NO_FATAL_FAILURE(VerifyResults<c_type>(decode_buf_, draws_, num_values_));
+  }
+
+  void CheckRoundtripSpaced(const uint8_t* valid_bits, int64_t valid_bits_offset) {
+    auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST,
+                                                    false, descr_.get());
+    auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST, descr_.get());
+    int null_count = 0;
+    for (auto i = 0; i < num_values_; i++) {
+      if (!bit_util::GetBit(valid_bits, valid_bits_offset + i)) {
+        null_count++;
+      }
+    }
+
+    encoder->PutSpaced(draws_, num_values_, valid_bits, valid_bits_offset);
+    encoder->FlushValues();
+    encoder->TrainFsstSymbolTable();
+    ASSERT_EQ(1, encoder->NumFsstPageBatches());
+    encode_buffer_ = encoder->CompressFsstPageBatch(0);
+
+    auto sym_body = encoder->GetSymbolTableBody();
+    ASSERT_NE(sym_body, nullptr);
+    decoder->SetFsstSymbolTable(sym_body->data(), static_cast<int>(sym_body->size()));
+
+    decoder->SetData(num_values_, encode_buffer_->data(),
+                     static_cast<int>(encode_buffer_->size()));
+    auto values_decoded = decoder->DecodeSpaced(decode_buf_, num_values_, null_count,
+                                                valid_bits, valid_bits_offset);
+    ASSERT_EQ(num_values_, values_decoded);
+    ASSERT_NO_FATAL_FAILURE(VerifyResultsSpaced<c_type>(decode_buf_, draws_, num_values_,
+                                                        valid_bits, valid_bits_offset));
+  }
+
+ protected:
+  USING_BASE_MEMBERS();
+};
+
+TEST_F(TestFsstEncoding, BasicRoundTrip) {
+  ASSERT_NO_FATAL_FAILURE(this->Execute(250, 5));
+  ASSERT_NO_FATAL_FAILURE(this->Execute(2000, 1));
+  ASSERT_NO_FATAL_FAILURE(this->ExecuteSpaced(1234, 1, 64, 0));
+  ASSERT_NO_FATAL_FAILURE(this->ExecuteSpaced(1234, 10, 64, 0.5));
+}
+
+TEST(FsstEncodingAdHoc, ArrowBinaryDirectPut) {
+  const int64_t size = 500;
+  const int32_t min_length = 0;
+  const int32_t max_length = 10;
+  const int32_t num_unique = 10;
+  const double null_probability = 0.25;
+  auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST);
+  auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+
+  auto CheckRoundtrip = [&](std::shared_ptr<::arrow::Array> values) {
+    ASSERT_NO_THROW(encoder->Put(*values));
+    encoder->FlushValues();
+    encoder->TrainFsstSymbolTable();
+    ASSERT_GE(encoder->NumFsstPageBatches(), 1);
+    auto buf = encoder->CompressFsstPageBatch(encoder->NumFsstPageBatches() - 1);
+
+    auto sym_body = encoder->GetSymbolTableBody();
+    ASSERT_NE(sym_body, nullptr);
+    decoder->SetFsstSymbolTable(sym_body->data(), static_cast<int>(sym_body->size()));
+
+    int num_values = static_cast<int>(values->length() - values->null_count());
+    decoder->SetData(num_values, buf->data(), static_cast<int>(buf->size()));
+
+    typename EncodingTraits<ByteArrayType>::Accumulator acc;
+    ASSERT_OK_AND_ASSIGN(acc.builder, ::arrow::MakeBuilder(values->type()));
+    ASSERT_EQ(num_values,
+              decoder->DecodeArrow(static_cast<int>(values->length()),
+                                   static_cast<int>(values->null_count()),
+                                   values->null_bitmap_data(), values->offset(), &acc));
+
+    std::shared_ptr<::arrow::Array> result;
+    ASSERT_OK(acc.builder->Finish(&result));
+    ASSERT_EQ(values->length(), result->length());
+    ASSERT_OK(result->ValidateFull());
+    ::arrow::AssertArraysEqual(*values, *result);
+  };
+
+  ::arrow::random::RandomArrayGenerator rag(42);
+  for (auto seed : {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+    rag = ::arrow::random::RandomArrayGenerator(seed);
+    auto values =
+        rag.BinaryWithRepeats(size, num_unique, min_length, max_length, null_probability);
+    for (auto type : binary_like_types_for_dense_decoding()) {
+      ARROW_SCOPED_TRACE("type = ", *type);
+      ASSERT_OK_AND_ASSIGN(auto cast_values, ::arrow::compute::Cast(*values, type));
+      CheckRoundtrip(cast_values);
+    }
+  }
+}
+
+TEST(FsstEncodingAdHoc, MultiplePageBatches) {
+  auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST);
+  auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+
+  std::vector<std::vector<std::string>> pages = {
+      {"https://example.com/page1", "https://example.com/page2"},
+      {"https://test.com/data1", "https://test.com/data2", "https://test.com/data3"},
+      {"http://example.com/index"},
+      {"https://example.com/page3", "https://example.com/page4",
+       "http://example.com/about", "https://test.com/data4"},
+  };
+
+  for (const auto& page : pages) {
+    for (const auto& s : page) {
+      ByteArray ba(s);
+      encoder->Put(&ba, 1);
+    }
+    encoder->FlushValues();
+  }
+
+  ASSERT_EQ(4, encoder->NumFsstPageBatches());
+  encoder->TrainFsstSymbolTable();
+  auto sym_body = encoder->GetSymbolTableBody();
+  ASSERT_NE(sym_body, nullptr);
+
+  for (size_t p = 0; p < pages.size(); ++p) {
+    auto buf = encoder->CompressFsstPageBatch(p);
+    ASSERT_NE(buf, nullptr);
+
+    auto page_decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+    page_decoder->SetFsstSymbolTable(sym_body->data(),
+                                     static_cast<int>(sym_body->size()));
+    int nvals = static_cast<int>(pages[p].size());
+    page_decoder->SetData(nvals, buf->data(), static_cast<int>(buf->size()));
+    std::vector<ByteArray> decoded(nvals);
+    ASSERT_EQ(nvals, page_decoder->Decode(decoded.data(), nvals));
+
+    for (int i = 0; i < nvals; ++i) {
+      std::string_view actual(reinterpret_cast<const char*>(decoded[i].ptr),
+                              decoded[i].len);
+      ASSERT_EQ(pages[p][i], actual)
+          << "Mismatch at page " << p << " index " << i;
+    }
+  }
+}
+
+TEST(FsstEncodingAdHoc, SingleValuePerPage) {
+  auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST);
+  auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+
+  std::vector<std::string> values = {"alpha", "beta", "gamma", "delta", "epsilon"};
+  for (const auto& s : values) {
+    ByteArray ba(s);
+    encoder->Put(&ba, 1);
+    encoder->FlushValues();
+  }
+
+  ASSERT_EQ(5, encoder->NumFsstPageBatches());
+  encoder->TrainFsstSymbolTable();
+  auto sym_body = encoder->GetSymbolTableBody();
+
+  for (size_t i = 0; i < values.size(); ++i) {
+    auto buf = encoder->CompressFsstPageBatch(i);
+    auto page_decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+    page_decoder->SetFsstSymbolTable(sym_body->data(),
+                                     static_cast<int>(sym_body->size()));
+    page_decoder->SetData(1, buf->data(), static_cast<int>(buf->size()));
+    std::vector<ByteArray> decoded(1);
+    ASSERT_EQ(1, page_decoder->Decode(decoded.data(), 1));
+    std::string_view actual(reinterpret_cast<const char*>(decoded[0].ptr),
+                            decoded[0].len);
+    ASSERT_EQ(values[i], actual);
+  }
+}
+
+TEST(FsstEncodingAdHoc, EmptyStrings) {
+  auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST);
+  auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+
+  std::vector<std::string> values = {"", "hello", "", "", "world", ""};
+  for (const auto& s : values) {
+    ByteArray ba(s);
+    encoder->Put(&ba, 1);
+  }
+  encoder->FlushValues();
+  encoder->TrainFsstSymbolTable();
+  auto buf = encoder->CompressFsstPageBatch(0);
+  auto sym_body = encoder->GetSymbolTableBody();
+
+  decoder->SetFsstSymbolTable(sym_body->data(), static_cast<int>(sym_body->size()));
+  int nvals = static_cast<int>(values.size());
+  decoder->SetData(nvals, buf->data(), static_cast<int>(buf->size()));
+  std::vector<ByteArray> decoded(nvals);
+  ASSERT_EQ(nvals, decoder->Decode(decoded.data(), nvals));
+  for (int i = 0; i < nvals; ++i) {
+    std::string_view actual(reinterpret_cast<const char*>(decoded[i].ptr),
+                            decoded[i].len);
+    ASSERT_EQ(values[i], actual);
+  }
+}
+
+TEST(FsstEncodingAdHoc, HighCompressionUrls) {
+  auto encoder = MakeTypedEncoder<ByteArrayType>(Encoding::FSST);
+  auto decoder = MakeTypedDecoder<ByteArrayType>(Encoding::FSST);
+
+  auto values = ::arrow::ArrayFromJSON(::arrow::utf8(), R"([
+    "https://example.com/page1",
+    "https://example.com/page2",
+    "https://example.com/page3",
+    "https://test.com/data1",
+    "https://test.com/data2",
+    "http://example.com/index",
+    "http://example.com/about",
+    "https://example.com/page4"
+  ])");
+
+  ASSERT_NO_THROW(encoder->Put(*values));
+  encoder->FlushValues();
+  encoder->TrainFsstSymbolTable();
+  ASSERT_EQ(1, encoder->NumFsstPageBatches());
+  auto buf = encoder->CompressFsstPageBatch(0);
+
+  auto sym_body = encoder->GetSymbolTableBody();
+  ASSERT_NE(sym_body, nullptr);
+  decoder->SetFsstSymbolTable(sym_body->data(), static_cast<int>(sym_body->size()));
+
+  int num_values = static_cast<int>(values->length());
+  decoder->SetData(num_values, buf->data(), static_cast<int>(buf->size()));
+
+  std::vector<ByteArray> decoded(num_values);
+  int decoded_count = decoder->Decode(decoded.data(), num_values);
+  ASSERT_EQ(num_values, decoded_count);
+
+  auto* string_array = checked_cast<const ::arrow::StringArray*>(values.get());
+  for (int i = 0; i < num_values; ++i) {
+    auto expected = string_array->GetView(i);
+    std::string_view actual(reinterpret_cast<const char*>(decoded[i].ptr), decoded[i].len);
+    ASSERT_EQ(expected, actual) << "Mismatch at index " << i;
+  }
+}
+
 }  // namespace parquet::test

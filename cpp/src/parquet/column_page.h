@@ -180,4 +180,10 @@ class DictionaryPage : public Page {
   bool is_sorted_;
 };
 
+class SymbolTablePage : public Page {
+ public:
+  explicit SymbolTablePage(const std::shared_ptr<Buffer>& buffer)
+      : Page(buffer, PageType::SYMBOL_TABLE_PAGE) {}
+};
+
 }  // namespace parquet

@@ -172,6 +172,9 @@ set(PARQUET_SRCS
     encryption/internal_file_decryptor.cc
     encryption/internal_file_encryptor.cc
     exception.cc
+    fsst_codec.cc
+    fsst/libfsst.cpp
+    fsst/fsst_avx512.cpp
     file_reader.cc
     file_writer.cc
     geospatial/statistics.cc
@@ -192,6 +195,10 @@ set(PARQUET_SRCS
     stream_reader.cc
     stream_writer.cc
     types.cc)
+
+set_source_files_properties(fsst/libfsst.cpp fsst/fsst_avx512.cpp
+                            PROPERTIES COMPILE_OPTIONS
+                                       "-Wno-error=shorten-64-to-32")
 
 if(ARROW_HAVE_RUNTIME_AVX2)
   # AVX2 is used as a proxy for BMI2.

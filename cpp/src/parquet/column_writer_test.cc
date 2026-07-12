@@ -604,6 +604,32 @@ TEST_F(TestByteArrayValuesWriter, RequiredDeltaByteArray) {
   this->TestRequiredWithEncoding(Encoding::DELTA_BYTE_ARRAY);
 }
 
+TEST_F(TestByteArrayValuesWriter, RequiredFsst) {
+  this->TestRequiredWithEncoding(Encoding::FSST);
+}
+
+TEST_F(TestByteArrayValuesWriter, RequiredFsstLargeMultiPage) {
+  this->TestRequiredWithSettings(Encoding::FSST, Compression::UNCOMPRESSED, false, false,
+                                 LARGE_SIZE);
+}
+
+TEST_F(TestByteArrayValuesWriter, RequiredFsstWithStats) {
+  this->TestRequiredWithSettings(Encoding::FSST, Compression::UNCOMPRESSED, false, true,
+                                 LARGE_SIZE);
+}
+
+TEST_F(TestByteArrayValuesWriter, RequiredFsstVeryLarge) {
+  this->TestRequiredWithSettings(Encoding::FSST, Compression::UNCOMPRESSED, false, false,
+                                 VERY_LARGE_SIZE);
+}
+
+#ifdef ARROW_WITH_ZSTD
+TEST_F(TestByteArrayValuesWriter, RequiredFsstWithZstd) {
+  this->TestRequiredWithSettings(Encoding::FSST, Compression::ZSTD, false, true,
+                                 LARGE_SIZE);
+}
+#endif
+
 TEST_F(TestFixedLengthByteArrayValuesWriter, RequiredDeltaByteArray) {
   this->TestRequiredWithEncoding(Encoding::DELTA_BYTE_ARRAY);
 }

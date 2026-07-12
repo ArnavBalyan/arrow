@@ -420,6 +420,7 @@ bool SerializedPageReader::ShouldSkipPage(EncodedStatistics* data_page_statistic
     const format::DictionaryPageHeader& dict_header =
         current_page_header_.dictionary_page_header;
     CheckNumValuesInHeader(dict_header.num_values);
+  } else if (page_type == PageType::SYMBOL_TABLE_PAGE) {
   } else {
     // We don't know what this page type is. We're allowed to skip non-data
     // pages.
@@ -534,6 +535,8 @@ std::shared_ptr<Page> SerializedPageReader::NextPage() {
       return std::make_shared<DictionaryPage>(page_buffer, dict_header.num_values,
                                               LoadEnumSafe(&dict_header.encoding),
                                               is_sorted);
+    } else if (page_type == PageType::SYMBOL_TABLE_PAGE) {
+      return std::make_shared<SymbolTablePage>(page_buffer);
     } else if (page_type == PageType::DATA_PAGE) {
       ++page_ordinal_;
       const format::DataPageHeader& header = current_page_header_.data_page_header;
@@ -808,6 +811,9 @@ class ColumnReaderImplBase {
       if (current_page_->type() == PageType::DICTIONARY_PAGE) {
         ConfigureDictionary(static_cast<const DictionaryPage*>(current_page_.get()));
         continue;
+      } else if (current_page_->type() == PageType::SYMBOL_TABLE_PAGE) {
+        fsst_symbol_table_ = current_page_->buffer();
+        continue;
       } else if (current_page_->type() == PageType::DATA_PAGE) {
         const auto* page = static_cast<const DataPageV1*>(current_page_.get());
         const int64_t levels_byte_size = InitializeLevelDecoders(
@@ -978,6 +984,20 @@ class ColumnReaderImplBase {
           break;
         }
 
+        case Encoding::FSST: {
+          if (!fsst_symbol_table_) {
+            throw ParquetException(
+                "FSST symbol table page must appear before data pages.");
+          }
+          auto decoder = MakeTypedDecoder<DType>(Encoding::FSST, descr_, pool_);
+          decoder->SetFsstSymbolTable(
+              fsst_symbol_table_->data(),
+              static_cast<int>(fsst_symbol_table_->size()));
+          current_decoder_.SetDecoder(decoder.get());
+          decoders_[static_cast<int>(encoding)] = std::move(decoder);
+          break;
+        }
+
         case Encoding::RLE_DICTIONARY:
           throw ParquetException("Dictionary page must be before data page.");
 
@@ -1038,6 +1058,8 @@ class ColumnReaderImplBase {
   /// Flag to signal when a new dictionary has been set, for the benefit of
   /// DictionaryRecordReader
   bool new_dictionary_ = false;
+
+  std::shared_ptr<Buffer> fsst_symbol_table_;
 
   // The exposed encoding
   ExposedEncoding exposed_encoding_ = ExposedEncoding::NO_ENCODING;
